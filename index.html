@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no"/>
+        <title>Weather Wizard</title>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.4.1/css/bootstrap-reboot.min.css"/>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.11.2/css/all.min.css"/>
+        <link href="https://fonts.googleapis.com/css?family=Lato&display=swap" rel="stylesheet"> 
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+
+    <body>
+        <div class="body">
+            <div class="wrapper">
+                <div id="game-container"></div>
+                <div class="weather-report">
+                    <div class="cloud-row">
+                        <img src="weather/wind-blowing-cloud.svg" class="cloud-image"/>
+                        <div class="weather-col">
+                            <span class="weather-report-title">Weather report for City</span>
+                            <span class="weather-report-info">A high pressure system will be moving over ____ this afternoon</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="weather-predict">
+                    <span class="weather-predict-points">0 points</span>
+                </div>
+                <div class="report-timer" style="display:none;">3</div>
+                <div class="predict-popup predict-popup-closed" style="display:none;">
+                    <div class="predict-popup-points">-5 points</div>
+                    <div class="predict-popup-header">
+                        <button class="predict-close-button">x</button>
+                        <b>What is the temperature in this part of Los Angeles?</b>
+                    </div>
+                    <br/>
+                    <div class="predict-option predict-cloudcover" style="display:none;">
+                        <button class="predict-cloudcover-option">
+                            <img src="weather/sunny.svg"/>
+                        </button>
+                        <button class="predict-cloudcover-option">
+                            <img src="weather/partly-cloudy.svg"/>
+                        </button>
+                        <button class="predict-cloudcover-option">
+                            <img src="weather/rain.svg"/>
+                        </button>
+                        <button class="predict-cloudcover-option">
+                            <img src="weather/thunderstorm.svg"/>
+                        </button>
+                    </div>
+                    <div class="predict-option predict-temperature">
+                        <div class="slider-row">
+                            <input type="range" value="50" name="pred-temperature" min="50" max="113">
+                            <span>50 °F</span>
+                        </div>
+                        <button class="predict-submit-button">Submit</button>
+                    </div>
+                    <div class="predict-option predict-windspeed">
+                        <div class="slider-row">
+                            <input type="range" value="0" name="pred-windspeed" min="0" max="50">
+                            <span>0 mph</span>
+                        </div>
+                        <button class="predict-submit-windspeed-button">Submit</button>
+                    </div>
+                </div>
+                <div class="loader">
+                    Loading...
+                </div>
+            </div>
+        </div>
+        <script src="core_script_compiled.js"></script>
+    </body>
+</html>
