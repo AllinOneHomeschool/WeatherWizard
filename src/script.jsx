@@ -244,6 +244,7 @@ async function showPredictDoc() {
         html: 'Welcome to Weather Predictions!<p></p>Weather information will periodically ' +
             'appear in areas on the map. You can move around the map either by dragging (except for Internet Explorer) or by using your arrow keys. When a lightbulb appears, click on it, and do your ' + 
             'best to answer the question with the information you have!<p></p> '+
+            "You're trying to predict what the conditions will be within the next 30 seconds or so (of real time).<p></p>" +
             "If you don't see any weather information near you, assume that it is sunny, and the temperature is " +
             `around ${BASE_TEMPERATURE} degrees Fahrenheit.<p></p>` +
             "Also, remember that weather which isn't moving towards you is irrelevant. You can use the wind barbs to figure out what's moving towards you and the speed at which it's moving. Each line coming off the wind barb adds 10 mph to the speed.<p></p>" +
