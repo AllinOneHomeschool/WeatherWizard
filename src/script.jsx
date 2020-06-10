@@ -687,6 +687,7 @@ let weatherChunks = [
 const BASE_TEMPERATURE = 70;
 
 
+let lockoutPrediction = false;
 async function setupForPredict(cities) {
     let swalPromise = null;
     let swalPromiseResolved = false;
@@ -741,7 +742,6 @@ async function setupForPredict(cities) {
     class WeatherChunk extends React.Component {
         constructor(props) {
             super(props);
-            this.groupRef = React.createRef(null);
             this.weatherTargetPoint = React.createRef(null);
         }
         getWeatherConditions() {
@@ -762,7 +762,7 @@ async function setupForPredict(cities) {
             const y = this.props.y || 0; 
             let hideFront = true;
             let angle = this.props.angle;
-            return <g ref={this.groupRef} transform={`rotate(0.0001) translate(${x} ${y})`} style={{overflow: "visible", opacity: this.props.opacity }}>
+            return <g ref={this.props.innerRef} transform={`rotate(0.0001) translate(${x} ${y})`} style={{overflow: "visible", opacity: this.props.opacity }}>
                 {/*<circle cx={0} cy={0} r={30}/>*/}
                 <text x={0} y={0}>
                     <tspan>{this.props.temperature + " °F"}</tspan>
@@ -901,13 +901,18 @@ async function setupForPredict(cities) {
     function WeatherContainer() {
         const chunkCoordsRef = React.useRef([]);
         const isMounted = useIsMounted();
-        const forceUpdate = useForceUpdate();
+        const rfu = useForceUpdate();
+        const forceUpdate = () => ReactDOM.unstable_batchedUpdates(() => rfu());
         const frameRef = React.useRef({ num: 0 });
-        useRaf((timeElapsed) => {
+        const timeElapsedRef = React.useRef({ num: Date.now() });
+        useRaf(() => {
             if(!swalPromiseResolved || currentPoints <= POINT_FAIL_THRESHOLD)
                 return;
+            const timeElapsed = Date.now() - timeElapsedRef.current.num;
+            const accelerationConstant = lockoutPrediction ? 20 : 1;
             const delta = Math.max(1, timeElapsed / 16);
             frameRef.current.num += delta;
+            timeElapsedRef.current.num = Date.now();
             chunkCoordsRef.current.forEach((coord, i) => {
                 if(coord[7] <= 0) {
                     chunkCoordsRef.current.splice(i, 1);
@@ -915,17 +920,22 @@ async function setupForPredict(cities) {
                     return;
                 } else if(coord[7] < 1) {
                     coord[7] = Math.max(0, coord[7] - (0.01 * delta));
-                    forceUpdate();
+                    coord.chunkRef.current.style.opacity = coord[7];
+                    //forceUpdate();
                 } else if(coord[8] <= 0) {
                     coord[7] = 0.9999;
+                    coord.chunkRef.current.style.opacity = coord[7];
                 }
+                if(coord[6] <= 0)
+                    return;
                 const angle = coord[2];
                 const dx = Math.cos(angle * (Math.PI/180)) * coord[6];
                 const dy = Math.sin(angle * (Math.PI/180)) * coord[6];
-                const rdx = dx / (1500 * delta);
-                const rdy = dy / (1500 * delta);
+                const rdx = (dx*accelerationConstant) / (1500 * delta);
+                const rdy = (dy*accelerationConstant) / (1500 * delta);
                 coord[0] += rdx;
                 coord[1] += rdy;
+                coord.chunkRef.current.setAttribute("transform", `rotate(0.0001) translate(${coord[0]} ${coord[1]})`);
                 if(!isFinite(coord[0]) || !isFinite(coord[1])) {
                     console.error("INFINITE POS");
                     chunkCoordsRef.current.splice(i, 1);
@@ -933,8 +943,8 @@ async function setupForPredict(cities) {
                     return;
                 }
             });
-            if((frameRef.current.num % 15) == 0)
-                forceUpdate();
+            //if(lockoutPrediction || (frameRef.current.num % 15) == 0)
+            //    forceUpdate();
         }, true);
         const getWeatherAtPoint = (point, selfRef) => {
             let weatherObj = { cloudCover: 0, temperature: 0, windSpeed: 0, alwaysHide: true };
@@ -988,16 +998,25 @@ async function setupForPredict(cities) {
             (async function() {
                 let iterations = 1;
 
+                async function doWaitForPrediction() {
+                    lockoutPrediction = true;
+                    hidePredict();
+                    weatherPredictPoints.textContent = "Let's see how you did...";
+                    await new Promise(resolve => setTimeout(resolve, 4*1000));
+                    lockoutPrediction = false;
+                }
                 const pickNewCity = () => {
                     city = cities[getRandomInt(0, cities.length)];
                     cities.forEach(c => {
                         c.style.visibility = (c != city) ? 'hidden' : 'visible';
                     });
                 };
-                const onCloudClick = (e) => {
+                const onCloudClick = async(e) => {
                     e.stopPropagation();
                     e.preventDefault();
-                    var myValue = e.currentTarget.getAttribute("data-cloudcover");
+                    const currentTarget = e.currentTarget;
+                    await doWaitForPrediction();
+                    var myValue = currentTarget.getAttribute("data-cloudcover");
                     var myCloudCover;
                     var w = getWeatherAtPoint(pivotPoint.getBBox());
                     var correctAnswer = w.cloudCover;
@@ -1056,8 +1075,11 @@ async function setupForPredict(cities) {
                     predictPopup.classList.add("predict-popup-closed");
                     predictPopupPoints.classList.remove("predict-popup-points-shown");
                 };
-                predictSubmitWindspeedButton.addEventListener("click", (e) => {
+
+                predictSubmitWindspeedButton.addEventListener("click", async(e) => {
                     e.stopPropagation();
+                    
+                    await doWaitForPrediction();
                     var tmp = parseInt(predictWindspeedInput.value);
                     var real = getWeatherAtPoint(pivotPoint.getBBox()).windSpeed;
                     var diff = Math.abs(real - tmp);
@@ -1071,12 +1093,13 @@ async function setupForPredict(cities) {
                     hidePredict();
                     iterations = 1;
                 })
-                predictSubmitButton.addEventListener("click", (e) => {
+                predictSubmitButton.addEventListener("click", async(e) => {
                     e.stopPropagation();
+                    await doWaitForPrediction();
                     var tmp = parseInt(predictPopupInput.value);
                     var real = getWeatherAtPoint(pivotPoint.getBBox()).temperature;
                     var diff = Math.abs(real - tmp);
-                    const maxDiff = 20;
+                    const maxDiff = 15;
                     if(diff > maxDiff) {
                         updateCurrentPoints(-10);
                     } else {
@@ -1122,6 +1145,7 @@ async function setupForPredict(cities) {
                             if(tooClose)
                                 continue;
                             //console.log("Spawn", coordSet[4], coordSet[5]);
+                            coordSet.chunkRef = { current: null };
                             chunkCoordsRef.current.push(coordSet);
                             forceUpdate();
                             spawnSuccess = true;
@@ -1129,7 +1153,7 @@ async function setupForPredict(cities) {
                         }
                     }
                     if(!spawnSuccess || chunkCoordsRef.current.length > COMPLAIN_THRESHOLD) {
-                        if(chunkCoordsRef.current.length > COMPLAIN_THRESHOLD && (iterations % (predictVisible ? 35 : 4)) == 0) {
+                        if(!lockoutPrediction && chunkCoordsRef.current.length > COMPLAIN_THRESHOLD && (iterations % (predictVisible ? 35 : 4)) == 0) {
                             if(currentPoints >= 100) {
                                 await Swal.fire({
                                     icon: 'success',
@@ -1157,7 +1181,8 @@ async function setupForPredict(cities) {
                             iterations = 0;
                         }
                         /* decrease lifetime */
-                        chunkCoordsRef.current.forEach(coord => coord[8] = Math.max(0, coord[8] - getRandomArbitrary(0.5, 3)));
+                        if(!lockoutPrediction)
+                            chunkCoordsRef.current.forEach(coord => coord[8] = Math.max(0, coord[8] - getRandomArbitrary(0.5, 3)));
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         iterations++;
                     }
@@ -1165,7 +1190,7 @@ async function setupForPredict(cities) {
             })();
         }, []);
         return chunkCoordsRef.current.map((coord, index) => {
-            return <WeatherChunk getWeatherAtPoint={getWeatherAtPoint} selfIndex={index} otherChunks={chunkCoordsRef.current} key={index} x={coord[0]} y={coord[1]} angle={coord[2]} cloudCover={coord[4]} temperature={coord[5]} windSpeed={coord[6]} opacity={coord[7]}/>;
+            return <WeatherChunk innerRef={coord.chunkRef} getWeatherAtPoint={getWeatherAtPoint} selfIndex={index} otherChunks={chunkCoordsRef.current} key={index} x={coord[0]} y={coord[1]} angle={coord[2]} cloudCover={coord[4]} temperature={coord[5]} windSpeed={coord[6]} opacity={coord[7]}/>;
         });
     }
     ReactDOM.render(<WeatherContainer/>, reactGroup);
