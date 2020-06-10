@@ -214,13 +214,14 @@ const EXTRA_MARGIN = 32;
 async function showSymbolDoc() {
     return Swal.fire({
         html: '<table><tr><th class="min">Weather symbol</th><th>Description</th></tr>' +
-            '<tr><td class="min"><img class="symbol" src="weather/lowpressure.svg"/></td><td><b>Low pressure system</b> - refers to a place where the atmospheric pressure is lowest compared to the surrounding area.</td></tr>' +
-            '<tr><td class="min"><img class="symbol" src="weather/highpressure.svg"/></td><td><b>High pressure system</b> - refers to a place where the atmospheric pressure is highest compared to the surrounding area.</td></tr>' +
-            '<tr><td class="min"><img class="symbol" src="weather/warmfront.svg"/></td><td><b>Warm front</b> - depicts the edge of an area of warm air moving into a colder region.</td></tr>' +
-            '<tr><td class="min"><img class="symbol" src="weather/coldfront.svg"/></td><td><b>Cold front</b> - depicts the edge of an area of cold air moving into a wamer region.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/low-pressure.svg"/></td><td><b>Low pressure system</b> - refers to a place where the atmospheric pressure is lowest compared to the surrounding area.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/high-pressure.svg"/></td><td><b>High pressure system</b> - refers to a place where the atmospheric pressure is highest compared to the surrounding area.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/warm-front.svg"/></td><td><b>Warm front</b> - depicts the edge of an area of warm air moving into a colder region.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/cold-front.svg"/></td><td><b>Cold front</b> - depicts the edge of an area of cold air moving into a wamer region.</td></tr>' +
             '<tr><td class="min"><img class="symbol" src="weather/sunny.svg"/></td><td><b>Sunny</b> - no precipitation and no clouds.</td></tr>' +
             '<tr><td class="min"><img class="symbol" src="weather/partly-cloudy.svg"/></td><td><b>Partly cloudy</b> - some clouds, but no precipitation.</td></tr>' +
             '<tr><td class="min"><img class="symbol" src="weather/rain.svg"/></td><td><b>Rain</b></td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/snow.svg"/></td><td><b>Snow</b></td></tr>' +
             '<tr><td class="min"><img class="symbol" src="weather/thunderstorm.svg"/></td><td><b>Thunderstorm</b></td></tr>' +
             '<tr><td class="min"><img class="symbol" src="weather/windbarb.svg"/></td><td><b>Wind barb</b> - each line represents 10 mph of the wind speed.</td></tr>' +
         '</table>'
@@ -341,7 +342,7 @@ function getBBox(element, withoutTransforms, toElement) {
         cy: minY + height / 2
     };
 }
-var cities,clickArea,numDragTries;
+var cities,clickArea,numDragTries,numObjectPlaces;
 function makeDraggable(evt) {
     var svg = evt.target || evt;
 
@@ -478,11 +479,19 @@ function makeDraggable(evt) {
     async function isAllowedDrop() {
         var id = selectedElement.getAttribute("id");
         if(id != reports[currentReport].type) {
-            Swal.fire({
-                title: 'Hmm...',
-                text: "It doesn't look like that's the right object to put there.",
-                icon: 'error'
-            });
+            console.log(numObjectPlaces);
+            if(numObjectPlaces >= 3) {
+                await Swal.fire({
+                    imageUrl: `weather/${reports[currentReport].type}.svg`,
+                    imageHeight: 75,
+                    text: 'You need to put this object here.'
+                });
+            } else
+                await Swal.fire({
+                    title: 'Hmm...',
+                    text: "It doesn't look like that's the right object to put there.",
+                    icon: 'error'
+                });
             return false;
         } else if(getCityName(currentDroppable) != reports[currentReport].city) {
             Swal.fire({
@@ -515,6 +524,7 @@ function makeDraggable(evt) {
             }
             selectedElement.querySelector("tspan").textContent = degrees + " °F";
         }
+        numObjectPlaces = 0;
         return true;
     }
     async function endDrag(evt) {
@@ -566,8 +576,10 @@ function makeDraggable(evt) {
                 correctSound.play();
                 setTimeout(() => gc.classList.remove("sky-anim"), 2000);
                 setupForReport(currentReport + 1);
-            } else
+            } else {
+                numObjectPlaces++;
                 selectedElement.remove();
+            }
         }
         else if (selectedElement) {
             Swal.fire({
@@ -588,6 +600,7 @@ function makeDraggable(evt) {
 
 function makeCityDroppable(city, targetPoint) {
     numDragTries = 0;
+    numObjectPlaces = 0;
     var clickGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     city.parentNode.insertBefore(clickGroup, city);
     clickGroup.appendChild(city);
