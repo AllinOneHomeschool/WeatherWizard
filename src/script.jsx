@@ -80,10 +80,10 @@ var availableReports = [
         { city: "Rochester", type: "temperature", degrees: 35, description: "It's 35 degrees Fahrenheit in Rochester.", targetPoint: [ 10, 30 ] },
         { city: "Duluth", type: "high-pressure", description: "A high pressure system is passing over Duluth this afternoon.", targetPoint: [ -20, -20 ] },
         { city: "Duluth", type: "partly-cloudy", description: "The sky is partly cloudy over Duluth.", targetPoint: [ -20, 0 ] },
-        { city: "Duluth", type: "temperature", degrees: 12, description: "It's 12 degrees Fahrenheit in Duluth.", targetPoint: [ 10, 30 ] },
+        { city: "Duluth", type: "temperature", degrees: 12, description: "It's 12 degrees Fahrenheit in Duluth.", targetPoint: [ 10, 10 ] },
         { city: "Minneapolis", type: "snow", description: "It's snowing in Minneapolis.", targetPoint: [ -20, -20 ] },
-        { city: "Minneapolis", type: "partly-cloudy", description: "The sky is partly cloudy over Minneapolis.", targetPoint: [ -20, 0 ] },
-        { city: "Minneapolis", type: "temperature", degrees: 13, description: "It's 13 degrees Fahrenheit in Minneapolis.", targetPoint: [ -10, 10 ] },
+        { city: "Minneapolis", type: "partly-cloudy", description: "The sky is partly cloudy over Minneapolis.", targetPoint: [ -30, 0 ] },
+        { city: "Minneapolis", type: "temperature", degrees: 13, description: "It's 13 degrees Fahrenheit in Minneapolis.", targetPoint: [ -20, 5 ] },
     ],
     [
         { city: "Los Angeles", type: "high-pressure", description: "A high pressure system is hovering between San Francisco and Los Angeles.", targetPoint: [ -30, -40 ]},
@@ -211,6 +211,46 @@ let chunkDataArray = [];
 const EXTRA_MARGIN = 32;
 
 
+async function showSymbolDoc() {
+    return Swal.fire({
+        html: '<table><tr><th class="min">Weather symbol</th><th>Description</th></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/lowpressure.svg"/></td><td><b>Low pressure system</b> - refers to a place where the atmospheric pressure is lowest compared to the surrounding area.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/highpressure.svg"/></td><td><b>High pressure system</b> - refers to a place where the atmospheric pressure is highest compared to the surrounding area.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/warmfront.svg"/></td><td><b>Warm front</b> - depicts the edge of an area of warm air moving into a colder region.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/coldfront.svg"/></td><td><b>Cold front</b> - depicts the edge of an area of cold air moving into a wamer region.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/sunny.svg"/></td><td><b>Sunny</b> - no precipitation and no clouds.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/partly-cloudy.svg"/></td><td><b>Partly cloudy</b> - some clouds, but no precipitation.</td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/rain.svg"/></td><td><b>Rain</b></td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/thunderstorm.svg"/></td><td><b>Thunderstorm</b></td></tr>' +
+            '<tr><td class="min"><img class="symbol" src="weather/windbarb.svg"/></td><td><b>Wind barb</b> - each line represents 10 mph of the wind speed.</td></tr>' +
+        '</table>'
+    });
+}
+
+async function showReportDoc() {
+    return Swal.fire({
+        icon: 'info',
+        title: 'Welcome to Weather Reporting!',
+        html: 'Information about the current conditions will appear at the bottom of your screen. Drag items from the top left of your screen into the appropriate locations on the map.<p></p>' +
+            'Some weather reports will list more than one icon. You should drag the icons onto the map in the order that they are listed.<p></p>' +
+            'You can move around the map either by dragging (except for Internet Explorer) or by using your arrow keys. Finish the weather report before you run out of time!'
+    });
+}
+
+async function showPredictDoc() {
+    return Swal.fire({
+        icon: 'info',
+        title: 'Instructions',
+        html: 'Welcome to Weather Predictions!<p></p>Weather information will periodically ' +
+            'appear in areas on the map. You can move around the map either by dragging (except for Internet Explorer) or by using your arrow keys. When a lightbulb appears, click on it, and do your ' + 
+            'best to answer the question with the information you have!<p></p> '+
+            "If you don't see any weather information near you, assume that it is sunny, and the temperature is " +
+            `around ${BASE_TEMPERATURE} degrees Fahrenheit.<p></p>` +
+            "Also, remember that weather which isn't moving towards you is irrelevant. You can use the wind barbs to figure out what's moving towards you and the speed at which it's moving. Each line coming off the wind barb adds 10 mph to the speed.<p></p>" +
+            `Your goal is to reach 100 points. If you fall below ${POINT_FAIL_THRESHOLD} points, ` +
+            'you will lose the game.'
+    });
+}
 
 
 function removeLoader() {
@@ -300,6 +340,7 @@ function getBBox(element, withoutTransforms, toElement) {
         cy: minY + height / 2
     };
 }
+var cities,clickArea,numDragTries;
 function makeDraggable(evt) {
     var svg = evt.target || evt;
 
@@ -338,7 +379,12 @@ function makeDraggable(evt) {
         console.log("drag start event");
         if (target) {
             console.log("start drag");
+            const tBBox = getBBox(target, false);
+            console.log(tBBox);
             selectedElement = target.cloneNode(true);
+            /* ui container offsets */
+            selectedElement.setAttribute("data-xoffset", tBBox.x); // - 44.14);
+            selectedElement.setAttribute("data-yoffset", tBBox.y); //- 25.2);
             target.parentNode.appendChild(selectedElement);
 
             offset = getMousePosition(evt);
@@ -410,8 +456,6 @@ function makeDraggable(evt) {
             let droppableBelow = null;
             elemBelow.some((item) => droppableBelow = item.closest('.droppable'));
 
-            console.log(droppableBelow);
-
             if (currentDroppable != droppableBelow) {
                 // we're flying in or out...
                 // note: both values can be null
@@ -478,9 +522,23 @@ function makeDraggable(evt) {
             if(await isAllowedDrop()) {
                 selectedElement.style.display = "inline";
                 selectedElement.classList.remove("draggable");
+                console.log(selectedElement);
                 mapGroup.appendChild(selectedElement);
                 const { x, y } = panzoom.getPan();
-                transform.setTranslate(lastDX-(x*2), lastDY-(y*2));
+                const cityBBOX = clickArea.getBBox();
+                const cityX = cityBBOX.x + cityBBOX.width / 2;
+                const cityY = cityBBOX.y + cityBBOX.height / 2;
+                const scaleFactor = (selectedElement.tagName.toLowerCase() == "text") ? 1 : 2;
+                const origX = lastDX - (x*2);
+                const origY = lastDY - (y*2);
+                const myBBOX = selectedElement.getBBox();
+                //  (-parseFloat(selectedElement.getAttribute("data-xoffset")) * 2) + 
+                //  (-parseFloat(selectedElement.getAttribute("data-yoffset")) * 2) + 
+                const xoff = parseFloat(selectedElement.getAttribute("data-xoffset"));
+                const yoff = parseFloat(selectedElement.getAttribute("data-yoffset"));
+                const finalX = (cityX) * 2 - xoff - myBBOX.width / (2*scaleFactor); //origX; // (cityBBOX.x * 2) - (xoff * 2) + (reports[currentReport].targetPoint[0] * 2);
+                const finalY =  (cityY) * 2 - yoff - myBBOX.height / (2*scaleFactor); // (cityBBOX.y * 2) - (yoff) + (reports[currentReport].targetPoint[1] * 2);
+                transform.setTranslate(finalX, finalY);
                 var translate = svg.createSVGTransform();
 
                 const s = 0.5; // (panzoom.getScale());
@@ -492,8 +550,8 @@ function makeDraggable(evt) {
                     const { x, y } = panzoom.getPan();
                     var px = (bbox.x/2)+(bbox.width/4)-x;
                     var py = (bbox.y/2)+(bbox.height/4)-y;
-                    //pivotPoint.setAttribute("cx", px);
-                    //pivotPoint.setAttribute("cy", py);
+                    pivotPoint.setAttribute("cx", px);
+                    pivotPoint.setAttribute("cy", py);
                     rotate.setRotate(reports[currentReport].rotation, px, py);
                     
                     selectedElement.transform.baseVal.insertItemBefore(rotate, 0);
@@ -526,7 +584,7 @@ function makeDraggable(evt) {
         currentDroppable = null;
     }
 }
-var cities,clickArea,numDragTries;
+
 function makeCityDroppable(city, targetPoint) {
     numDragTries = 0;
     var clickGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -589,7 +647,7 @@ function setupForReport(i) {
     }
     document.querySelector(".weather-predict").style.display = "none";
     currentReport = i;
-    var city = findCity(reports[i].city);
+    city = findCity(reports[i].city);
     const droppables = document.querySelectorAll(".droppable");
     if(droppables)
         droppables.forEach(droppable => {
@@ -615,20 +673,6 @@ let weatherChunks = [
 const BASE_TEMPERATURE = 70;
 
 
-function showWelcomeScreen() {
-    Swal.fire({
-        icon: 'info',
-        title: 'Instructions',
-        html: 'Welcome to Weather Predictions!<p></p>Weather information will periodically ' +
-            'appear in areas on the map. You can move around the map either by dragging (except for Internet Explorer) or by using your arrow keys. When a lightbulb appears, click on it, and do your ' + 
-            'best to answer the question with the information you have!<p></p> '+
-            "If you don't see any weather information near you, assume that it is sunny, and the temperature is " +
-            `around ${BASE_TEMPERATURE} degrees Fahrenheit.<p></p>` +
-            "Also, remember that weather which isn't moving towards you is irrelevant. You can use the wind barbs to figure out what's moving towards you and the speed at which it's moving. Each line coming off the wind barb adds 10 mph to the speed.<p></p>" +
-            `Your goal is to reach 100 points. If you fall below ${POINT_FAIL_THRESHOLD} points, ` +
-            'you will lose the game.'
-    });
-}
 async function setupForPredict(cities) {
     let swalPromise = null;
     let swalPromiseResolved = false;
@@ -639,7 +683,7 @@ async function setupForPredict(cities) {
         console.error(e);
     }
     if(!welcomeShown)
-        swalPromise = showWelcomeScreen();
+        swalPromise = showPredictDoc();
     else {
         swalPromise = Promise.resolve();
         swalPromiseResolved = true;
@@ -824,7 +868,7 @@ async function setupForPredict(cities) {
         predictPopup.style.display = oldDisplayValue;
         predictPopup.style.transform =
             `translateX(${Math.round(Math.min(window.innerWidth - (popupRect.width), Math.max(0, x - (popupRect.width / 2))))}px) ` +
-            `translateY(${Math.round(Math.min(window.innerHeight - popupRect.height, Math.max(0, y)))}px)`;
+            `translateY(${Math.round(Math.min(window.innerHeight - (popupRect.height * 2), Math.max(0, y)))}px)`;
     };
     let predictVisible = false;
     let currentPredictMode = 0;
@@ -895,7 +939,6 @@ async function setupForPredict(cities) {
             let sll = sortedCoords.length;
 
             if(sortedCoords.length == 0) {
-                console.log("one chunk");
                 weatherObj.temperature = BASE_TEMPERATURE;
                 weatherObj.cloudCover = 0;
                 weatherObj.windSpeed = 0;
@@ -1181,6 +1224,13 @@ fetch('state.svg')
         svg.querySelector("#path4503").remove();
         reports = availableReports[parseInt(getParameterByName("level"))];
         let isPredict = getParameterByName("predict") == "true";
+        document.querySelectorAll(".help-button").forEach(btn => btn.addEventListener("click", async() => {
+            await showSymbolDoc();
+            if(isPredict)
+                await showPredictDoc();
+            else
+                await showReportDoc();
+        }));
         panzoom = Panzoom(mapGroup, {
             maxScale: isPredict ? 6 : 2,
             minScale: isPredict ? 1 : 2,
@@ -1206,15 +1256,7 @@ fetch('state.svg')
             console.error(e);
         }
         if(!symbolsShown) {
-            await Swal.fire({
-                title: 'Weather symbols',
-                html: '<table><tr><th class="min">Weather symbol</th><th>Description</th></tr>' +
-                    '<tr><td class="min"><img src="weather/lowpressure.svg"/></td><td><b>Low pressure system</b> - refers to a place where the atmospheric pressure is lowest compared to the surrounding area.</td></tr>' +
-                    '<tr><td class="min"><img src="weather/highpressure.svg"/></td><td><b>High pressure system</b> - refers to a place where the atmospheric pressure is highest compared to the surrounding area.</td></tr>' +
-                    '<tr><td class="min"><img src="weather/warmfront.svg"/></td><td><b>Warm front</b> - depicts the edge of an area of warm air moving into a colder region.</td></tr>' +
-                    '<tr><td class="min"><img src="weather/coldfront.svg"/></td><td><b>Cold front</b> - depicts the edge of an area of cold air moving into a wamer region.</td></tr>' +
-                '</table>'
-            });
+            await showSymbolDoc();
             try {
                 window.sessionStorage.setItem('shownSymbols', true);
             } catch(e) {
@@ -1230,11 +1272,7 @@ fetch('state.svg')
                 console.error(e);
             }
             if(!reportInstrsShown) {
-                await Swal.fire({
-                    icon: 'info',
-                    title: 'Welcome to Weather Reporting!',
-                    text: 'Information about the current conditions will appear at the bottom of your screen. Drag items from the top left of your screen into the appropriate locations on the map. You can move around the map either by dragging (except for Internet Explorer) or by using your arrow keys. Finish the weather report before you run out of time!'
-                });
+                await showReportDoc();
                 try {
                     window.sessionStorage.setItem('reportInstrsShown', true);
                 } catch(e) {
