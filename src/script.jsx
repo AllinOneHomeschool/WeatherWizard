@@ -245,7 +245,7 @@ async function showPredictDoc() {
         html: 'Welcome to Weather Predictions!<p></p>Weather information will periodically ' +
             'appear in areas on the map. You can move around the map either by dragging (except for Internet Explorer) or by using your arrow keys. When a lightbulb appears, click on it, and do your ' + 
             'best to answer the question with the information you have!<p></p> '+
-            "You're trying to predict what the conditions will be within the next 30 seconds or so (of real time).<p></p>" +
+            "You're trying to predict what the conditions will be like in an hour.<p></p>" +
             "If you don't see any weather information near you, assume that it is sunny, and the temperature is " +
             `around ${BASE_TEMPERATURE} degrees Fahrenheit.<p></p>` +
             "Also, remember that weather which isn't moving towards you is irrelevant. You can use the wind barbs to figure out what's moving towards you and the speed at which it's moving. Each line coming off the wind barb adds 10 mph to the speed.<p></p>" +
@@ -703,6 +703,9 @@ async function setupForPredict(cities) {
         swalPromise = Promise.resolve();
         swalPromiseResolved = true;
     }
+
+    const PREDICT_ACCELERATION = 33.3;
+    const PREDICT_WAIT_TIME = 3;
     const { default: React } = await import(/* webpackChunkName: "react" */ "react");
     const { default: ReactDOM } = await import(/* webpackChunkName: "react" */ "react-dom");
     const { default: useIsMounted } = await import(/* webpackChunkName: "react" */ "react-is-mounted-hook");
@@ -832,10 +835,10 @@ async function setupForPredict(cities) {
     predictWindspeedInput.addEventListener("input", windSpeedInputListener);
     predictPopupInput.addEventListener("change", popupInputListener);
     predictWindspeedInput.addEventListener("change", windSpeedInputListener);
-    let weatherPredictPoints;
-    function updateCurrentPoints(delta) {
+    let weatherPredictPoints, weatherPredictTime;
+    function updateCurrentPoints(delta, correctAnswer) {
         currentPoints += delta;
-        predictPopupPoints.textContent = `${delta} point${Math.abs(delta) == 1 ? "" : "s"}`;
+        predictPopupPoints.textContent = `${delta} point${Math.abs(delta) == 1 ? "" : "s"}` + ((delta != 10 && correctAnswer) ? ` (${correctAnswer})` : "");
         predictPopupPoints.style.color = (delta > 0) ? 'green' : 'red';
         predictPopupPoints.classList.add("predict-popup-points-shown");
         predictPopup.classList.add("predict-popup-closed");
@@ -869,7 +872,10 @@ async function setupForPredict(cities) {
     predictPopup.addEventListener("transitioncancel", () => {
         trackTransition = false;
     });
-    var predictPopupHeader = predictPopup.querySelector("b");
+    var predictPopupHeader = predictPopup.querySelector(".predict-popup-header b");
+    var predictPopupTimeHeader = predictPopup.querySelector(".predict-popup-time-header b");
+    // ${Math.round((PREDICT_WAIT_TIME * 36 * PREDICT_ACCELERATION / 60))} minutes
+    predictPopupTimeHeader.textContent = `Predict the weather for 1 hour from now.`;
     var dragMove = false;
     const movePivotPoint = () => {
         let bRect = pivotPoint.getBoundingClientRect();
@@ -887,6 +893,7 @@ async function setupForPredict(cities) {
     let predictVisible = false;
     let currentPredictMode = 0;
     weatherPredictPoints = document.querySelector(".weather-predict-points");
+    weatherPredictTime = document.querySelector(".weather-predict-time");
 
     function hidePredict() {
         predictPopup.classList.add("predict-popup-hidden");
@@ -897,19 +904,26 @@ async function setupForPredict(cities) {
             c.style.visibility = 'hidden';
         });
     }
+    function pad(n, width, z) {
+        z = z || '0';
+        n = n + '';
+        return n.length >= width ? n : new Array(width - n.length + 1).join(z) + n;
+    }
     hidePredict();
+    let epoch = Date.now();
     function WeatherContainer() {
         const chunkCoordsRef = React.useRef([]);
         const isMounted = useIsMounted();
         const rfu = useForceUpdate();
         const forceUpdate = () => ReactDOM.unstable_batchedUpdates(() => rfu());
         const frameRef = React.useRef({ num: 0 });
-        const timeElapsedRef = React.useRef({ num: Date.now() });
+        let now = Date.now();
+        const timeElapsedRef = React.useRef({ num: now });
         useRaf(() => {
             if(!swalPromiseResolved || currentPoints <= POINT_FAIL_THRESHOLD)
                 return;
             const timeElapsed = Date.now() - timeElapsedRef.current.num;
-            const accelerationConstant = lockoutPrediction ? 20 : 1;
+            const accelerationConstant = lockoutPrediction ? PREDICT_ACCELERATION : 1;
             const delta = Math.max(1, timeElapsed / 16);
             frameRef.current.num += delta;
             timeElapsedRef.current.num = Date.now();
@@ -943,6 +957,13 @@ async function setupForPredict(cities) {
                     return;
                 }
             });
+            //if((frameRef.current.num % 2) == 0) {
+                let timeDiff = timeElapsed * 36 * accelerationConstant;
+                epoch += timeDiff;
+                let currentDate = new Date(epoch);
+                function hours12(date) { return (date.getHours() + 24) % 12 || 12; }
+                weatherPredictTime.textContent = `${hours12(currentDate)}:${pad(currentDate.getMinutes(), 2)} ${currentDate.getHours() >= 12 ? 'PM' : 'AM'}`;
+            //}
             //if(lockoutPrediction || (frameRef.current.num % 15) == 0)
             //    forceUpdate();
         }, true);
@@ -1002,7 +1023,7 @@ async function setupForPredict(cities) {
                     lockoutPrediction = true;
                     hidePredict();
                     weatherPredictPoints.textContent = "Let's see how you did...";
-                    await new Promise(resolve => setTimeout(resolve, 4*1000));
+                    await new Promise(resolve => setTimeout(resolve, PREDICT_WAIT_TIME*1000));
                     lockoutPrediction = false;
                 }
                 const pickNewCity = () => {
@@ -1032,12 +1053,21 @@ async function setupForPredict(cities) {
                     var diff = Math.abs(myCloudCover - correctAnswer);
                     console.log(diff);
                     console.log(w);
+                    let conditions;
+                    if(w.cloudCover >= 85 && w.temperature >= BASE_TEMPERATURE)
+                        conditions = "thunderstorm";
+                    else if(w.cloudCover >= 75)
+                        conditions = "rain";
+                    else if(w.cloudCover >= 25)
+                        conditions = "partly cloudy";
+                    else
+                        conditions = "sunny";
                     const maxDiff = 25;
                     
                     if(diff > maxDiff) {
-                        updateCurrentPoints(-10);
+                        updateCurrentPoints(-10, conditions);
                     } else {
-                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))));
+                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))), conditions);
                     }
                     hidePredict();
                     iterations = 1;
@@ -1086,9 +1116,9 @@ async function setupForPredict(cities) {
                     console.log(tmp, real, diff);
                     const maxDiff = 20;
                     if(diff > maxDiff) {
-                        updateCurrentPoints(-10);
+                        updateCurrentPoints(-10, real + " mph");
                     } else {
-                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))));
+                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))), real + " mph");
                     }
                     hidePredict();
                     iterations = 1;
@@ -1101,9 +1131,9 @@ async function setupForPredict(cities) {
                     var diff = Math.abs(real - tmp);
                     const maxDiff = 15;
                     if(diff > maxDiff) {
-                        updateCurrentPoints(-10);
+                        updateCurrentPoints(-10, real + " °F");
                     } else {
-                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))));
+                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))), real + " °F");
                     }
                     hidePredict();
                     iterations = 1;
@@ -1208,6 +1238,10 @@ async function setupForPredict(cities) {
         movePivotPoint();
         console.log("end pan");
         dragMove = false;
+    });
+    mapGroup.addEventListener("panzoomzoom", () => {
+        const scale = panzoom.getScale();
+        document.querySelector(".scale span").textContent = Math.round(((1/(scale/2)) * 3) * 30) + " mi";
     });
     window.addEventListener("resize", movePivotPoint);
     setTimeout(() => movePivotPoint());

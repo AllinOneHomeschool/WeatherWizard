@@ -192,7 +192,7 @@ svg {
     flex-direction: row;
 }
 
-.weather-predict-points {
+.weather-predict-points, .weather-predict-time {
     text-align: center;
     font-size: 200%;
     flex: 1 1 auto;
@@ -422,17 +422,35 @@ input[type=range]:focus::-ms-fill-upper {
     background-position: center;
     background-repeat: no-repeat;
 }
-.predict-popup-header {
+.predict-popup-header, .predict-popup-time-header {
     display: flex;
     align-items: center;
     vertical-align: middle;
     justify-content: flex-start;
 }
-.predict-popup-header b {
+.predict-popup-header b, .predict-popup-time-header b {
     flex-grow: 1;
     vertical-align: middle;
 }
-.predict-popup-header button {
+
+.scale {
+    width: 90px;
+    position: absolute;
+    right: 4px;
+    bottom: 2em;
+    border: 4px black solid;
+    border-top: none;
+    z-index: 2;
+    text-align: center;
+    pointer-events: none;
+}
+
+.scale span {
+    position: relative;
+    display: inline-block;
+    transform: translateY(4px) translateY(100%);
+}
+.predict-popup-header button, .predict-popup-time-header button {
     background: none;
     flex: none;
     border: none;
@@ -444,7 +462,7 @@ input[type=range]:focus::-ms-fill-upper {
     pointer-events: auto;
     font-weight: 900;
 }
-.predict-popup-closed .predict-popup-header {
+.predict-popup-closed .predict-popup-header, .predict-popup-closed .predict-popup-time-header {
     display: none;
 }
 
