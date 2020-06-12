@@ -1012,7 +1012,7 @@ async function setupForPredict(cities) {
                 }
                 console.log(sll, weightSum);
             }
-            
+            console.log(weatherObj);
             return weatherObj;
         };
         React.useEffect(() => {
@@ -1051,8 +1051,6 @@ async function setupForPredict(cities) {
                         myCloudCover = 0;
                     
                     var diff = Math.abs(myCloudCover - correctAnswer);
-                    console.log(diff);
-                    console.log(w);
                     let conditions;
                     if(w.cloudCover >= 85 && w.temperature >= BASE_TEMPERATURE)
                         conditions = "thunderstorm";
@@ -1062,7 +1060,7 @@ async function setupForPredict(cities) {
                         conditions = "partly cloudy";
                     else
                         conditions = "sunny";
-                    const maxDiff = 25;
+                    const maxDiff = 10;
                     
                     if(diff > maxDiff) {
                         updateCurrentPoints(-10, conditions);
@@ -1149,7 +1147,7 @@ async function setupForPredict(cities) {
                 let spawnSuccess = false;
                 const COMPLAIN_THRESHOLD = -1;
                 while(isMounted()) {
-                    if(currentPoints > POINT_FAIL_THRESHOLD && chunkCoordsRef.current.length < 50) {
+                    if(!lockoutPrediction && currentPoints > POINT_FAIL_THRESHOLD && chunkCoordsRef.current.length < 50) {
                         for(var i = 0; i < 10; i++) {
                             let isStatic = !(Math.random() >= 0.75);
                             let x = getRandomArbitrary(0, 900);
