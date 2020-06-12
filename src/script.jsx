@@ -686,6 +686,7 @@ let weatherChunks = [
 
 const BASE_TEMPERATURE = 70;
 
+let midX, midY;
 
 let lockoutPrediction = false;
 async function setupForPredict(cities) {
@@ -932,13 +933,10 @@ async function setupForPredict(cities) {
                     chunkCoordsRef.current.splice(i, 1);
                     forceUpdate();
                     return;
-                } else if(coord[7] < 1) {
+                } else if(coord[1] >= 800 || coord[1] <= -200 || coord[0] <= -200 || coord[0] >= 1000 || coord[8] <= 0 || coord[7] < 1) {
                     coord[7] = Math.max(0, coord[7] - (0.01 * delta));
                     coord.chunkRef.current.style.opacity = coord[7];
-                    //forceUpdate();
-                } else if(coord[8] <= 0) {
-                    coord[7] = 0.9999;
-                    coord.chunkRef.current.style.opacity = coord[7];
+                    forceUpdate();
                 }
                 if(coord[6] <= 0)
                     return;
@@ -969,10 +967,11 @@ async function setupForPredict(cities) {
         }, true);
         const getWeatherAtPoint = (point, selfRef) => {
             let weatherObj = { cloudCover: 0, temperature: 0, windSpeed: 0, alwaysHide: true };
-            const MAX_DISTANCE = 200;
+            const MAX_DISTANCE = 100;
             let biggestDistance = 0;
             const sortedCoords = chunkCoordsRef.current.filter(coord => {
-                const realDistance = Math.pow(coord[1] - point.y, 2) + Math.pow(coord[0] - point.x, 2);
+                const realDistance = Math.sqrt(Math.pow(coord[1] - point.y, 2) + Math.pow(coord[0] - point.x, 2));
+                console.log(realDistance, MAX_DISTANCE);
                 const valid = realDistance <= MAX_DISTANCE;
                 coord.chunkDistance = MAX_DISTANCE-realDistance;
                 if(valid) {
@@ -993,7 +992,6 @@ async function setupForPredict(cities) {
                 for(var i = 0; i < sortedCoords.length; i++) {
                     var coord = sortedCoords[i];
                     if(coord == selfRef) {
-                        sll--;
                         continue;
                     }
                     if(coord.chunkDistance == 0) {
@@ -1003,14 +1001,19 @@ async function setupForPredict(cities) {
                         break;
                     }
                     
-                    let relativeWeight = coord.chunkDistance / totalDistance;
+                    let relativeWeight = coord.chunkDistance / MAX_DISTANCE;
                     weightSum += relativeWeight;
                     weatherObj.temperature += relativeWeight * coord[5];
                     weatherObj.cloudCover += relativeWeight * coord[4];
                     weatherObj.windSpeed += relativeWeight * coord[6];
                     weatherObj.alwaysHide = false;
                 }
-                console.log(sll, weightSum);
+                weatherObj.temperature /= weightSum;
+                weatherObj.temperature = Math.round(weatherObj.temperature);
+                weatherObj.cloudCover /= weightSum;
+                weatherObj.cloudCover = Math.round(weatherObj.cloudCover / 25) * 25;
+                weatherObj.windSpeed /= weightSum;
+                weatherObj.windSpeed = Math.round(weatherObj.windSpeed);
             }
             console.log(weatherObj);
             return weatherObj;
@@ -1036,18 +1039,22 @@ async function setupForPredict(cities) {
                     e.stopPropagation();
                     e.preventDefault();
                     const currentTarget = e.currentTarget;
+                    selectRandomPoint();
                     await doWaitForPrediction();
                     var myValue = currentTarget.getAttribute("data-cloudcover");
                     var myCloudCover;
                     var w = getWeatherAtPoint(pivotPoint.getBBox());
                     var correctAnswer = w.cloudCover;
                     if(myValue == "thunderstorm")
-                        myCloudCover = 85;
+                        myCloudCover = 100;
                     else if(myValue == "rain")
                         myCloudCover = 75;
-                    else if(myValue == "partly-cloudy")
-                        myCloudCover = 25;
-                    else
+                    else if(myValue == "partly-cloudy") {
+                        if(w.cloudCover >= 25 && w.cloudCover < 75 && myValue == "partly-cloudy")
+                            myCloudCover = w.cloudCover;
+                        else
+                            myCloudCover = 50;
+                    } else
                         myCloudCover = 0;
                     
                     var diff = Math.abs(myCloudCover - correctAnswer);
@@ -1060,7 +1067,7 @@ async function setupForPredict(cities) {
                         conditions = "partly cloudy";
                     else
                         conditions = "sunny";
-                    const maxDiff = 10;
+                    const maxDiff = 25;
                     
                     if(diff > maxDiff) {
                         updateCurrentPoints(-10, conditions);
@@ -1071,21 +1078,14 @@ async function setupForPredict(cities) {
                     iterations = 1;
                 };
                 predictPopup.querySelectorAll(".predict-cloudcover-option").forEach(btn => btn.addEventListener("click", onCloudClick));
+                const selectRandomPoint = () => {
+                    pickNewCity();
+                    const bbox = city.getBBox();
+                    const DIST = 25;
+                    midX = (bbox.x + (bbox.width / 2)) + getRandomArbitrary(-DIST, DIST);
+                    midY = (bbox.y + (bbox.height / 2)) + getRandomArbitrary(-DIST, DIST);
+                };
                 const predictForRandomPoint = () => {
-                    let distance;
-                    let midX, midY;
-                    do {
-                        distance = Number.MAX_VALUE;
-                        pickNewCity();
-                        const bbox = city.getBBox();
-                        const DIST = 25;
-                        midX = (bbox.x + (bbox.width / 2)) + getRandomArbitrary(-DIST, DIST);
-                        midY = (bbox.y + (bbox.height / 2)) + getRandomArbitrary(-DIST, DIST);
-                        for(var j = 0; j < chunkCoordsRef.current.length; j++) {
-                            const coord = chunkCoordsRef.current[j];
-                            distance = Math.min(distance, Math.sqrt(Math.pow(coord[1] - midY, 2) + Math.pow(coord[0] - midX, 2)));
-                        }
-                    } while(distance < 50);
 
                     pivotPoint.setAttribute("cx", midX);
                     pivotPoint.setAttribute("cy", midY);
@@ -1106,7 +1106,7 @@ async function setupForPredict(cities) {
 
                 predictSubmitWindspeedButton.addEventListener("click", async(e) => {
                     e.stopPropagation();
-                    
+                    selectRandomPoint();
                     await doWaitForPrediction();
                     var tmp = parseInt(predictWindspeedInput.value);
                     var real = getWeatherAtPoint(pivotPoint.getBBox()).windSpeed;
@@ -1123,6 +1123,7 @@ async function setupForPredict(cities) {
                 })
                 predictSubmitButton.addEventListener("click", async(e) => {
                     e.stopPropagation();
+                    selectRandomPoint();
                     await doWaitForPrediction();
                     var tmp = parseInt(predictPopupInput.value);
                     var real = getWeatherAtPoint(pivotPoint.getBBox()).temperature;
@@ -1144,18 +1145,19 @@ async function setupForPredict(cities) {
                 } catch(e) {
                     console.error(e);
                 }
+                selectRandomPoint();
                 let spawnSuccess = false;
                 const COMPLAIN_THRESHOLD = -1;
                 while(isMounted()) {
-                    if(!lockoutPrediction && currentPoints > POINT_FAIL_THRESHOLD && chunkCoordsRef.current.length < 50) {
+                    if(!lockoutPrediction && currentPoints > POINT_FAIL_THRESHOLD && chunkCoordsRef.current.length < 100) {
                         for(var i = 0; i < 10; i++) {
                             let isStatic = !(Math.random() >= 0.75);
-                            let x = getRandomArbitrary(0, 900);
+                            let x = midX + getRandomArbitrary(-200, 200);
                             let angle = getRandomArbitrary(0, 360);
-                            let cloudCover = getRandomInt(0, 6) * 20;
+                            let cloudCover = getRandomInt(0, 5) * 25;
                             if(cloudCover >= 75)
                                 isStatic = false;
-                            let y = getRandomArbitrary(100, isStatic ? 500 : 600);
+                            let y = midY + getRandomArbitrary(-200, 200);
                             let temperatureF = getRandomInt(50, 113);
                             let windSpeed = (!isStatic ? (getRandomInt(1, 5) * 10) : 0);
 
@@ -1210,8 +1212,8 @@ async function setupForPredict(cities) {
                         }
                         /* decrease lifetime */
                         if(!lockoutPrediction)
-                            chunkCoordsRef.current.forEach(coord => coord[8] = Math.max(0, coord[8] - getRandomArbitrary(0.5, 3)));
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                            chunkCoordsRef.current.forEach(coord => coord[8] = Math.max(0, coord[8] - (getRandomArbitrary(0.5, 3) / 2)));
+                        await new Promise(resolve => setTimeout(resolve, 500));
                         iterations++;
                     }
                 }
@@ -1237,10 +1239,12 @@ async function setupForPredict(cities) {
         console.log("end pan");
         dragMove = false;
     });
-    mapGroup.addEventListener("panzoomzoom", () => {
+    const zoomHook = () => {
         const scale = panzoom.getScale();
-        document.querySelector(".scale span").textContent = Math.round(((1/(scale/2)) * 3) * 30) + " mi";
-    });
+        document.querySelector(".scale span").textContent = Math.round(((1/(scale/2)) * 2) * 10) + " mi";
+    };
+    mapGroup.addEventListener("panzoomzoom", zoomHook);
+    zoomHook();
     window.addEventListener("resize", movePivotPoint);
     setTimeout(() => movePivotPoint());
 }
