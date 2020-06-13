@@ -1183,7 +1183,7 @@ async function setupForPredict(cities) {
                         }
                     }
                     if(!spawnSuccess || chunkCoordsRef.current.length > COMPLAIN_THRESHOLD) {
-                        if(!lockoutPrediction && chunkCoordsRef.current.length > COMPLAIN_THRESHOLD && (iterations % (predictVisible ? 35 : 4)) == 0) {
+                        if(!lockoutPrediction && chunkCoordsRef.current.length > COMPLAIN_THRESHOLD && (iterations % (predictVisible ? 60 : 4)) == 0) {
                             if(currentPoints >= 100) {
                                 await Swal.fire({
                                     icon: 'success',
