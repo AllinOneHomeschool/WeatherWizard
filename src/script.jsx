@@ -1405,7 +1405,7 @@ async function setupForPredict(cities) {
     });
     const zoomHook = () => {
         const scale = panzoom.getScale();
-        document.querySelector(".scale span").textContent = Math.round(((1/(scale/2)) * 2) * 10) + " mi";
+        document.querySelector(".scale span").textContent = Math.round(((1/(scale/2))) * 10) + " mi";
         dbPivot();
     };
     mapGroup.addEventListener("panzoomzoom", zoomHook);
