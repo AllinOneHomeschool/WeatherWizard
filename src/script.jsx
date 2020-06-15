@@ -8,15 +8,32 @@ import 'svg-classlist-polyfill';
 import './geometry-polyfill.js';
 import regeneratorRuntime from 'regenerator-runtime';
 import { default as OrigSwal } from 'sweetalert2';
-import raf from "raf";
+
+import seedrandom from 'seedrandom';
 
 
 import Panzoom from '@panzoom/panzoom'
+import debounce from 'debounce';
 import {Howl, Howler} from 'howler';
+
+let gameRng = null;
+
+let manualPredictionSource = null;
+let currentPrecomputeData = null, previousPrecomputeData = null;
+
+let allowLoopback = true;
+
+let manualIndex = 0;
 
 let currentPoints = 0;
 
-const POINT_FAIL_THRESHOLD = -15;
+let globalTickCounter = 0;
+
+let targetTicks = -1;
+
+let unhappyColleagues = false;
+
+const POINT_FAIL_THRESHOLD = -30;
 
 const FAKE_TEMPERATURE_SHIFT = 20;
 
@@ -106,7 +123,7 @@ var availableReports = [
         { city: "Houston", type: "temperature", degrees: 70, description: "Temperatures in Houston are around 70 degrees Fahrenheit.", targetPoint: [ -10, 10 ]},
         { city: "Corpus Christi", type: "temperature", degrees: 75, description: "Temperatures in Corpus Christi are around 75 degrees Fahrenheit.", targetPoint: [ -30, 10 ]},
         { city: "San Francisco", type: "thunderstorm", description: "San Francisco will experience thunderstorms as a result of a low pressure system centered on Sacramento.", targetPoint: [ 0, 20 ]},
-        { city: "Sacramento", type: "low-pressure", description: "San Francisco will experience thunderstorms as a result of a low pressure system centered on Sacramento.", targetPoint: [ 0, 0 ]},
+        { city: "Sacramento", type: "low-pressure", description: "San Francisco will experience thunderstorms as a result of a low pressure system centered on Sacramento.", targetPoint: [ 0, -20 ]},
         { city: "San Francisco", type: "temperature", degrees: 65, description: "Temperatures range from 65 degrees Fahrenheit in San Francisco to 76 degrees in Sacramento.", targetPoint: [ 30, 20 ]},
         { city: "Sacramento", type: "temperature", degrees: 76, description: "Temperatures range from 65 degrees Fahrenheit in San Francisco to 76 degrees in Sacramento.", targetPoint: [ 10, -20 ]},
     ]
@@ -243,12 +260,12 @@ async function showPredictDoc() {
         icon: 'info',
         title: 'Instructions',
         html: 'Welcome to Weather Predictions!<p></p>Weather information will periodically ' +
-            'appear in areas on the map. You can move around the map either by dragging (except for Internet Explorer) or by using your arrow keys. When a lightbulb appears, click on it, and do your ' + 
+            'appear in areas on the map (the orange circle indicates it\'s exact position). You can move around the map either by dragging (except for Internet Explorer) or by using your arrow keys. When a lightbulb appears, click on it, and do your ' + 
             'best to answer the question with the information you have!<p></p> '+
-            "You're trying to predict what the conditions will be like in an hour.<p></p>" +
-            "If you don't see any weather information near you, assume that it is sunny, and the temperature is " +
-            `around ${BASE_TEMPERATURE} degrees Fahrenheit.<p></p>` +
-            "Also, remember that weather which isn't moving towards you is irrelevant. You can use the wind barbs to figure out what's moving towards you and the speed at which it's moving. Each line coming off the wind barb adds 10 mph to the speed.<p></p>" +
+            "You're trying to predict what the conditions will be like in an hour. You'll notice a thin outline around the area you're predicting for. This is there to help you tell what weather is applicable.<p></p>" +
+            "If you're confused why you got an answer wrong, remember that the outline gives you a rough idea of which weather was actually relevant.<p></p>" +
+            "Also, strong weather on the outskirts of your city could cause local cloudiness or even precipitation depending on how strong it is.<p></p>" +
+            "You can use the wind barbs to figure out what's moving towards you and the speed at which it's moving. Each line coming off the wind barb adds 10 mph to the speed.<p></p>" +
             `Your goal is to reach 100 points. If you fall below ${POINT_FAIL_THRESHOLD} points, ` +
             'you will lose the game.'
     });
@@ -264,10 +281,10 @@ let city, stateGroup, svg, mapGroup, panzoom, currentReport = -1, pivotPoint, fa
 function getRandomInt(min, max) {
     min = Math.ceil(min);
     max = Math.floor(max);
-    return Math.floor(Math.random() * (max - min)) + min; //The maximum is exclusive and the minimum is inclusive
+    return Math.floor(gameRng() * (max - min)) + min; //The maximum is exclusive and the minimum is inclusive
 }
 function getRandomArbitrary(min, max) {
-    return Math.random() * (max - min) + min;
+    return gameRng() * (max - min) + min;
 }
 function getCityName(city) {
     return (city.textContent.replace("⍟", "").replace(" ", "")).trim();
@@ -378,11 +395,8 @@ function makeDraggable(evt) {
 
     function startDrag(evt) {
         var target = evt.target.closest(".draggable");
-        console.log("drag start event");
         if (target) {
-            console.log("start drag");
             const tBBox = getBBox(target, false);
-            console.log(tBBox);
             selectedElement = target.cloneNode(true);
             /* ui container offsets */
             selectedElement.setAttribute("data-xoffset", tBBox.x); // - 44.14);
@@ -479,7 +493,6 @@ function makeDraggable(evt) {
     async function isAllowedDrop() {
         var id = selectedElement.getAttribute("id");
         if(id != reports[currentReport].type) {
-            console.log(numObjectPlaces);
             if(numObjectPlaces >= 3) {
                 await Swal.fire({
                     imageUrl: `weather/${reports[currentReport].type}.svg`,
@@ -533,7 +546,6 @@ function makeDraggable(evt) {
             if(await isAllowedDrop()) {
                 selectedElement.style.display = "inline";
                 selectedElement.classList.remove("draggable");
-                console.log(selectedElement);
                 mapGroup.appendChild(selectedElement);
                 const { x, y } = panzoom.getPan();
                 const cityBBOX = clickArea.getBBox();
@@ -689,7 +701,33 @@ const BASE_TEMPERATURE = 70;
 let midX, midY;
 
 let lockoutPrediction = false;
+
+let savedPredictionInfo = null;
+
+const MAX_DISTANCE = 75;
 async function setupForPredict(cities) {
+    window.finalPredictions = [];
+    if(!manualPredictionSource)
+        window.addEventListener("keydown", (e) => {
+            //well you need keep on mind that your browser use some keys 
+            //to call some function, so we'll prevent this
+            e.preventDefault();
+
+            //now we caught the key code, yabadabadoo!!
+            var keyCode = e.keyCode || e.which;
+
+            //your keyCode contains the key code, F1 to F12 
+            //is among 112 and 123. Just it.
+            console.log(keyCode);
+            if(keyCode == 121) {
+                console.log(JSON.stringify(window.finalPredictions, (name, val) => {
+                    if(name == "chunks")
+                        return JSON.stringify(val);
+                    else
+                        return val;
+                }, 4));
+            }
+        });
     let swalPromise = null;
     let swalPromiseResolved = false;
     let welcomeShown = false;
@@ -711,37 +749,6 @@ async function setupForPredict(cities) {
     const { default: ReactDOM } = await import(/* webpackChunkName: "react" */ "react-dom");
     const { default: useIsMounted } = await import(/* webpackChunkName: "react" */ "react-is-mounted-hook");
     const { default: useForceUpdate } = await import(/* webpackChunkName: "react" */ "use-force-update");
-
-    function useRaf(callback, isActive) {
-        const savedCallback = React.useRef();
-        // Remember the latest function.
-        React.useLayoutEffect(() => {
-          savedCallback.current = callback;
-        }, [callback]);
-      
-        React.useLayoutEffect(() => {
-          let startTime, animationFrame;
-      
-          function tick() {
-            const timeElapsed = Date.now() - startTime;
-            startTime = Date.now();
-            loop();
-            savedCallback.current && savedCallback.current(timeElapsed);
-          }
-      
-          function loop() {
-            animationFrame = raf(tick);
-          }
-      
-          if (isActive) {
-            startTime = Date.now();
-            loop();
-            return () => {
-              raf.cancel(animationFrame);
-            };
-          }
-        }, [isActive]);
-    }
 
     class WeatherChunk extends React.Component {
         constructor(props) {
@@ -768,21 +775,15 @@ async function setupForPredict(cities) {
             let angle = this.props.angle;
             return <g ref={this.props.innerRef} transform={`rotate(0.0001) translate(${x} ${y})`} style={{overflow: "visible", opacity: this.props.opacity }}>
                 {/*<circle cx={0} cy={0} r={30}/>*/}
-                <text x={0} y={0}>
+                <circle className="center-circle" r={2} cy={0} cx={0} fill="#ff6600" stroke="none" />
+                <text x={5} y={2.75} style={{fontSize: '8px'}}>
                     <tspan>{this.props.temperature + " °F"}</tspan>
                 </text>
-                <image x={-15} y={0} width={40} height={40} xlinkHref={`weather/${this.getWeatherConditions()}.svg`}/>
-                <g style={{ opacity: 0 }} className="fake-weather-group" transform={`rotate(${angle - 45} 0 0) scale(6 6) translate(2.044 -1.332)`} strokeWidth={1.8} fill={frontColor} stroke={frontColor}>
-                    <path d="M6.33 1.332a8.375 8.375 0 01-8.374 8.374" fill="none"/>
-                    <circle r={0.808} cy={9.919} cx={1.853} stroke="none" />
-                    <circle cx={3.953} cy={8.738} r={0.808} stroke="none" />
-                    <circle r={0.808} cy={7.037} cx={5.602} stroke="none" />
-                    <circle cx={6.645} cy={4.986} r={0.808} stroke="none" />
-                    <circle r={0.808} cy={2.826} cx={7.145} stroke="none" />
-                    <circle cx={-0.338} cy={10.374} r={0.808} stroke="none" />
-                    <circle r={0.808} cy={15.037} cx={10.602} ref={this.weatherTargetPoint} fill="none" stroke="none" />
-                </g>
-                <g fill="#000" fillOpacity="1" transform={`scale(0.1 0.1) translate(-150 -450) rotate(${angle + 90} 38.5 160)`}>
+                {/*<text x={-15} y={2.75} style={{fontSize: '8px'}} fill="red">
+                    <tspan>{this.props.id}</tspan>
+                </text>*/}
+                <image x={-4} y={10} width={40} height={40} transform={`scale(0.5)`} xlinkHref={`weather/${this.getWeatherConditions()}.svg`}/>
+                <g fill="#000" fillOpacity="1" transform={`scale(0.05) translate(-150 -450) rotate(${angle + 90} 38.5 160)`}>
                     {windSpeed > 0 && <path
                     strokeWidth="1.8"
                     d="M78.323 45.314H26.536L39.483 22.89 52.43.465 65.376 22.89z"
@@ -818,6 +819,7 @@ async function setupForPredict(cities) {
     var city = null;
     document.querySelector(".weather-report").style.display = "none";
     var predictPopup = document.querySelector(".predict-popup");
+
     let predictPopupPoints = predictPopup.querySelector(".predict-popup-points");
     var predictPopupInput = predictPopup.querySelector(".predict-temperature input[type=range]");
     var predictWindspeedInput = predictPopup.querySelector(".predict-windspeed input[type=range]");
@@ -845,6 +847,11 @@ async function setupForPredict(cities) {
         predictPopup.classList.add("predict-popup-closed");
         movePivotPoint();
         weatherPredictPoints.textContent = `${currentPoints} point${currentPoints == 1 ? "" : "s"}`;
+        //lockoutPrediction = true;
+        //predictPopup.classList.add("predict-popup-star");
+        //await new Promise(resolve => setTimeout(resolve, 2000));
+        //predictPopup.classList.remove("predict-popup-star");
+        //lockoutPrediction = false;
     }
     var trackTransition = false;
     const transitionTrackLoop = () => {
@@ -882,25 +889,35 @@ async function setupForPredict(cities) {
         let bRect = pivotPoint.getBoundingClientRect();
 
         const x = bRect.left + (bRect.width / 2);
-        const y = bRect.top - (bRect.height);
+        const y = bRect.top + (bRect.height / 2);
         const oldDisplayValue = predictPopup.style.display;
         predictPopup.style.display = '';
         const popupRect = predictPopup.getBoundingClientRect();
         predictPopup.style.display = oldDisplayValue;
         predictPopup.style.transform =
             `translateX(${Math.round(Math.min(window.innerWidth - (popupRect.width), Math.max(0, x - (popupRect.width / 2))))}px) ` +
-            `translateY(${Math.round(Math.min(window.innerHeight - (popupRect.height * 2), Math.max(0, y)))}px)`;
+            `translateY(${Math.round(Math.min(window.innerHeight - (popupRect.height) - 64, Math.max(0, y)))}px)`;
+        predictPopup.blur();
+    };
+    const debouncedMovePivotPoint = debounce(movePivotPoint, 50);
+    const dbPivot = () => {
+        movePivotPoint();
+        debouncedMovePivotPoint();
     };
     let predictVisible = false;
+    let predictOpenedTime = 0;
     let currentPredictMode = 0;
     weatherPredictPoints = document.querySelector(".weather-predict-points");
     weatherPredictTime = document.querySelector(".weather-predict-time");
 
-    function hidePredict() {
+    function hidePredict(hidePivot = true) {
         predictPopup.classList.add("predict-popup-hidden");
         predictPopup.classList.add("predict-popup-closed");
+        if(hidePivot)
+            pivotPoint.style.opacity = "0";
         movePivotPoint();
         predictVisible = false;
+        predictOpenedTime = Date.now();
         cities.forEach(c => {
             c.style.visibility = 'hidden';
         });
@@ -912,68 +929,413 @@ async function setupForPredict(cities) {
     }
     hidePredict();
     let epoch = Date.now();
+    let chunkId = 0;
     function WeatherContainer() {
         const chunkCoordsRef = React.useRef([]);
         const isMounted = useIsMounted();
         const rfu = useForceUpdate();
         const forceUpdate = () => ReactDOM.unstable_batchedUpdates(() => rfu());
         const frameRef = React.useRef({ num: 0 });
-        let now = Date.now();
-        const timeElapsedRef = React.useRef({ num: now });
-        useRaf(() => {
-            if(!swalPromiseResolved || currentPoints <= POINT_FAIL_THRESHOLD)
-                return;
-            const timeElapsed = Date.now() - timeElapsedRef.current.num;
-            const accelerationConstant = lockoutPrediction ? PREDICT_ACCELERATION : 1;
-            const delta = Math.max(1, timeElapsed / 16);
-            frameRef.current.num += delta;
-            timeElapsedRef.current.num = Date.now();
-            chunkCoordsRef.current.forEach((coord, i) => {
-                if(coord[7] <= 0) {
-                    chunkCoordsRef.current.splice(i, 1);
-                    forceUpdate();
-                    return;
-                } else if(coord[1] >= 800 || coord[1] <= -200 || coord[0] <= -200 || coord[0] >= 1000 || coord[8] <= 0 || coord[7] < 1) {
-                    coord[7] = Math.max(0, coord[7] - (0.01 * delta));
-                    coord.chunkRef.current.style.opacity = coord[7];
-                    forceUpdate();
+        React.useEffect(() => {
+            (async function() {
+                const TICK_SPEED = 16;
+                async function doWaitForPrediction() {
+                    lockoutPrediction = true;
+                    hidePredict();
+                    predictPopup.classList.add("predict-popup-star");
+                    predictPopup.style.visibility = 'visible';
+                    pivotPoint.style.opacity = "0.1";
+                    weatherPredictPoints.textContent = "Let's see how you did...";
+                    let numTicks = 62.5 * PREDICT_WAIT_TIME;
+                    if(manualPredictionSource && previousPrecomputeData.numTicks)
+                        numTicks = previousPrecomputeData.numTicks;
+                    savedPredictionInfo = {
+                        chunks: chunkCoordsRef.current.map(coord => coord.slice()),
+                        midX: parseFloat(pivotPoint.getAttribute("cx")),
+                        midY: parseFloat(pivotPoint.getAttribute("cy")),
+                        predictMode: currentPredictMode,
+                        numTicks
+                    };
+                    await new Promise(resolve => {
+                        targetTicks = globalTickCounter + numTicks;
+                        const fn = () => {
+                            window.removeEventListener("targetTicksReached", fn);
+                            resolve();
+                        };
+                        window.addEventListener("targetTicksReached", fn);
+                    });
+                    predictPopup.style.visibility = '';
+                    predictPopup.classList.remove("predict-popup-star");
+                    lockoutPrediction = false;
                 }
-                if(coord[6] <= 0)
-                    return;
-                const angle = coord[2];
-                const dx = Math.cos(angle * (Math.PI/180)) * coord[6];
-                const dy = Math.sin(angle * (Math.PI/180)) * coord[6];
-                const rdx = (dx*accelerationConstant) / (1500 * delta);
-                const rdy = (dy*accelerationConstant) / (1500 * delta);
-                coord[0] += rdx;
-                coord[1] += rdy;
-                coord.chunkRef.current.setAttribute("transform", `rotate(0.0001) translate(${coord[0]} ${coord[1]})`);
-                if(!isFinite(coord[0]) || !isFinite(coord[1])) {
-                    console.error("INFINITE POS");
-                    chunkCoordsRef.current.splice(i, 1);
-                    forceUpdate();
-                    return;
+                const showCityName = () => {
+                    if(manualPredictionSource)
+                        return;
+                    cities.forEach(c => {
+                        const match =  (c.textContent.trim() == city.textContent.trim());
+                        c.style.visibility = !match ? 'hidden' : 'visible';
+                    });  
+                };
+                const pickNewCity = (showName) => {
+                    if(manualPredictionSource)
+                        return;
+                    console.log("Pick city");
+                    city = cities[getRandomInt(0, cities.length)];
+                    if(typeof showName == 'undefined' || showName)
+                        showCityName();
+                };
+                const onCloudClick = async(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    const currentTarget = e.currentTarget;
+                    selectRandomPoint();
+                    await doWaitForPrediction();
+                    var myValue = currentTarget.getAttribute("data-cloudcover");
+                    var myCloudCover;
+                    const pivotB = pivotPoint.getBBox();
+                    var w = getPivotWeather();
+                    var correctAnswer = w.cloudCover;
+                    if(myValue == "thunderstorm")
+                        myCloudCover = 100;
+                    else if(myValue == "rain")
+                        myCloudCover = 75;
+                    else if(myValue == "partly-cloudy") {
+                        if(w.cloudCover >= 25 && w.cloudCover < 75 && myValue == "partly-cloudy")
+                            myCloudCover = w.cloudCover;
+                        else
+                            myCloudCover = 50;
+                    } else
+                        myCloudCover = 0;
+                    
+                    var diff = Math.abs(myCloudCover - correctAnswer);
+                    let conditions;
+                    if(w.cloudCover >= 85 && w.temperature >= BASE_TEMPERATURE)
+                        conditions = "thunderstorm";
+                    else if(w.cloudCover >= 75)
+                        conditions = "rain";
+                    else if(w.cloudCover >= 25)
+                        conditions = "partly cloudy";
+                    else
+                        conditions = "sunny";
+                    const maxDiff = 25;
+                    
+                    if(diff > maxDiff) {
+                        updateCurrentPoints(-10, conditions);
+                    } else {
+                        updateCurrentPoints(Math.round(10 * (1 - (diff / maxDiff))), conditions);
+                    }
+                    hidePredict(false);
+                };
+                predictPopup.querySelectorAll(".predict-cloudcover-option").forEach(btn => btn.addEventListener("click", onCloudClick));
+                const noChunksNearby = () => {
+                    return !chunkCoordsRef.current.some(coord => {
+                        let realX = coord[0]; // + 150;
+                        let realY = coord[1]; // + 450;
+                        const realDistance = Math.sqrt(Math.pow(realY - midY, 2) + Math.pow(realX - midX, 2));
+                        return realDistance < MAX_DISTANCE;
+                    });
+                };
+                const trySpawnChunk = () => {
+                    let spawnSuccess = false;
+                    for(var i = 0; i < 2; i++) {
+                        let isStatic = (gameRng() >= 0.5);
+                        let x = midX + getRandomArbitrary(-200, 200);
+                        let angle = getRandomArbitrary(0, 360);
+                        let cloudCover = getRandomInt(0, 5) * 25;
+                        if(cloudCover >= 75)
+                            isStatic = false;
+                        let y = midY + getRandomArbitrary(-200, 200);
+                        let temperatureF = getRandomInt(50, 113);
+                        let windSpeed = (!isStatic ? (getRandomInt(1, 5) * 10) : 0);
+
+                        let coordSet = [ x, y, angle, 0, cloudCover, temperatureF, windSpeed, 1, 50, chunkId++ ];
+                        let tooClose = false;
+                        let distance = 0;
+                        for(var j = 0; j < chunkCoordsRef.current.length; j++) {
+                            const coord = chunkCoordsRef.current[j];
+                            distance = Math.sqrt(Math.pow(coord[1] - coordSet[1], 2) + Math.pow(coord[0] - coordSet[0], 2))
+                            if(distance < (MAX_DISTANCE*0.6)) {
+                                tooClose = true;
+                                break;
+                            }
+                        }
+                        if(tooClose)
+                            continue;
+                        coordSet.chunkRef = { current: null };
+                        chunkCoordsRef.current.push(coordSet);
+                        forceUpdate();
+                        spawnSuccess = true;
+                        break;
+                    }
+                    return spawnSuccess;
+                };
+                const selectRandomPoint = () => {
+                    if(!manualPredictionSource) {
+                        do {
+                            pickNewCity(false);
+                            const bbox = city.getBBox();
+                            const DIST = 25;
+                            midX = (bbox.x + (bbox.width / 2)) + getRandomArbitrary(-DIST, DIST);
+                            midY = (bbox.y + (bbox.height / 2)) + getRandomArbitrary(-DIST, DIST);
+                            if(chunkCoordsRef.current.length < 5)
+                                trySpawnChunk();
+                        } while(0);
+                    }
+                    
+                    else {
+                        previousPrecomputeData = currentPrecomputeData;
+                        if(manualIndex == manualPredictionSource.length) {
+                            console.error("Out of entries");
+                            if(allowLoopback)
+                                manualIndex = 0;
+                            else {
+                                manualIndex++;
+                                return;
+                            }
+                        }
+                        console.log("Read from precomputed data point " + manualIndex);
+                        currentPrecomputeData = manualPredictionSource[manualIndex++];
+                        midX = currentPrecomputeData.midX;
+                        midY = currentPrecomputeData.midY;
+                        
+                        
+                    }
+                };
+                const predictForRandomPoint = async() => {
+                    if(manualPredictionSource && manualIndex == (manualPredictionSource.length + 1)) {
+                        lockoutPrediction = true;
+                        unhappyColleagues = true;
+                        await Swal.fire({
+                            icon: 'error',
+                            title: 'Uh oh',
+                            text: "It's taken you too long to finish making all your predictions, and/or you've made too many mistakes! Either way, your colleagues are not happy!",
+                            confirmButtonText: "Try again",
+                        });
+                        window.location.reload(false);
+                    }
+                    showCityName();
+                    pivotPoint.setAttribute("cx", midX);
+                    pivotPoint.setAttribute("cy", midY);
+                    pivotPoint.style.opacity = "0.1";
+                    movePivotPoint();
+                    const names = [ "cloudcover", "temperature", "windspeed" ];
+                    if(!manualPredictionSource) {
+                        chunkCoordsRef.current.forEach(coord => {
+                            if(coord[7] < 1)
+                                return;
+                            const distanceFromMid = Math.sqrt(Math.pow(coord[0] - midX, 2) + Math.pow(coord[1] - midY, 2));
+                            if(distanceFromMid >= (MAX_DISTANCE*4)) {
+                                coord[8] = 0;
+                                coord[7] = 0.99;
+                            } else if(coord[6] == 0 && distanceFromMid < 50) {
+                                coord[8] = 0;
+                                coord[7] = 0;
+                            }
+                        });
+                        
+                        currentPredictMode = getRandomInt(0, names.length);
+                    } else {
+                        chunkCoordsRef.current = JSON.parse(currentPrecomputeData.chunks);
+                        chunkCoordsRef.current.forEach(coord => coord.chunkRef = { current: null });
+                        currentPredictMode = currentPrecomputeData.predictMode || 0;
+                        forceUpdate();
+                    }
+                    
+                    predictPopup.querySelectorAll(".predict-option").forEach(predict => {
+                        predict.style.display = (predict.classList.contains("predict-" + names[currentPredictMode])) ? '' : "none";
+                    });
+                    predictPopup.setAttribute("title", names[currentPredictMode]);
+                    const realName = (names[currentPredictMode] == "cloudcover") ? "conditions" : names[currentPredictMode];
+                    predictPopupHeader.textContent = `What do you think the ${realName} around the center of this area will be?`; // + getCityName(city) + ` will be?`;
+                    
+                    predictPopup.classList.remove("predict-popup-hidden");
+                    predictPopup.classList.remove("predict-popup-star");
+                    predictPopup.style.display = '';
+                    predictPopup.classList.add("predict-popup-closed");
+                    predictPopupPoints.classList.remove("predict-popup-points-shown");
+
+                    if(!manualPredictionSource) {
+                        chunkCoordsRef.current = [];
+                        await new Promise(resolve => setTimeout(resolve, 4000));
+                        /* AUTO GEN */
+                        selectRandomPoint();
+                        await doWaitForPrediction();
+                        getPivotWeather();
+                    }
+                    
+                };
+
+                predictSubmitWindspeedButton.addEventListener("click", async(e) => {
+                    e.stopPropagation();
+                    selectRandomPoint();
+                    await doWaitForPrediction();
+                    var tmp = parseInt(predictWindspeedInput.value);
+                    var real = getPivotWeather().windSpeed;
+                    var diff = Math.abs(real - tmp);
+                    const maxDiff = 20;
+                    if(diff > maxDiff) {
+                        updateCurrentPoints(-10, real + " mph");
+                    } else {
+                        updateCurrentPoints(Math.round(10 * (1 - (diff / maxDiff))), real + " mph");
+                    }
+                    hidePredict(false);
+                })
+                predictSubmitButton.addEventListener("click", async(e) => {
+                    e.stopPropagation();
+                    selectRandomPoint();
+                    await doWaitForPrediction();
+                    var tmp = parseInt(predictPopupInput.value);
+                    var real = getPivotWeather().temperature;
+                    var diff = Math.abs(real - tmp);
+                    const maxDiff = 15;
+                    if(diff > maxDiff) {
+                        updateCurrentPoints(-10, real + " °F");
+                    } else {
+                        updateCurrentPoints(Math.round(10 * (1 - (diff / maxDiff))), real + " °F");
+                    }
+                    hidePredict(false);
+                })
+                removeLoader();
+                await swalPromise;
+                swalPromiseResolved = true;
+                try {
+                    window.sessionStorage.setItem('shownWelcome', true);
+                } catch(e) {
+                    console.error(e);
                 }
-            });
-            //if((frameRef.current.num % 2) == 0) {
-                let timeDiff = timeElapsed * 36 * accelerationConstant;
-                epoch += timeDiff;
-                let currentDate = new Date(epoch);
-                function hours12(date) { return (date.getHours() + 24) % 12 || 12; }
-                weatherPredictTime.textContent = `${hours12(currentDate)}:${pad(currentDate.getMinutes(), 2)} ${currentDate.getHours() >= 12 ? 'PM' : 'AM'}`;
-            //}
-            //if(lockoutPrediction || (frameRef.current.num % 15) == 0)
-            //    forceUpdate();
-        }, true);
+                selectRandomPoint();
+                let spawnSuccess = false;
+                const COMPLAIN_THRESHOLD = -1;
+                let intervalVal = -1;
+                let ticks = 0;
+                predictVisible = true;
+                predictOpenedTime = Date.now();
+                predictForRandomPoint();
+                const loopFn = async() => {
+                    let isFakeTick = document.visibilityState != 'visible';
+                    if(!isMounted())
+                        return;
+                    if(!isFakeTick && !unhappyColleagues && swalPromiseResolved && currentPoints > POINT_FAIL_THRESHOLD && (lockoutPrediction || (Date.now()-predictOpenedTime) < 4000)) {
+                        const timeElapsed = TICK_SPEED; // Date.now() - timeElapsedRef.current.num;
+                        const accelerationConstant = lockoutPrediction ? PREDICT_ACCELERATION : 1;
+                        const delta = 1; // Math.max(1, timeElapsed / 16);
+                        frameRef.current.num += delta;
+                        chunkCoordsRef.current.forEach((coord, i) => {
+                            if(coord[7] <= 0) {
+                                chunkCoordsRef.current.splice(i, 1);
+                                forceUpdate();
+                                return;
+                            } else if(coord[7] < 1) {
+                                coord[7] = Math.max(0, coord[7] - (0.05 * delta));
+                                coord.chunkRef.current.style.opacity = coord[7];
+                                forceUpdate();
+                            }
+                            if(coord[6] <= 0)
+                                return;
+                            const angle = coord[2];
+                            const dx = Math.cos(angle * (Math.PI/180)) * coord[6];
+                            const dy = Math.sin(angle * (Math.PI/180)) * coord[6];
+                            const rdx = (dx*accelerationConstant) / (1500 * delta);
+                            const rdy = (dy*accelerationConstant) / (1500 * delta);
+                            coord[0] += rdx;
+                            coord[1] += rdy;
+                            if(coord.chunkRef)
+                                coord.chunkRef.current.setAttribute("transform", `rotate(0.0001) translate(${coord[0]} ${coord[1]})`);
+                            if(!isFinite(coord[0]) || !isFinite(coord[1])) {
+                                console.error("INFINITE POS");
+                                chunkCoordsRef.current.splice(i, 1);
+                                forceUpdate();
+                                return;
+                            }
+                        });
+                        let timeDiff = timeElapsed * 36 * accelerationConstant;
+                        epoch += timeDiff;
+                        let currentDate = new Date(epoch);
+                        function hours12(date) { return (date.getHours() + 24) % 12 || 12; }
+                        weatherPredictTime.textContent = `${hours12(currentDate)}:${pad(currentDate.getMinutes(), 2)} ${currentDate.getHours() >= 12 ? 'PM' : 'AM'}`;
+                    }
+                    if(!isFakeTick) {
+                        ticks++;
+                        globalTickCounter++;
+                        if(globalTickCounter == Math.round(targetTicks)) {
+                            targetTicks = -1;
+                            // Create the event.
+                            var event = document.createEvent('Event');
+    
+                            // Define that the event name is 'build'.
+                            event.initEvent('targetTicksReached', true, true);
+    
+                            // target can be any Element or other EventTarget.
+                            window.dispatchEvent(event);
+                        }
+                    }
+                    intervalVal = setTimeout(loopFn, TICK_SPEED);
+                    if(!isFakeTick && (ticks % ((chunkCoordsRef.current.length < 10) ? 8 : 16)) == 0) {
+                        if(!manualPredictionSource && !lockoutPrediction && currentPoints > POINT_FAIL_THRESHOLD && chunkCoordsRef.current.length < 20) {
+                            if(trySpawnChunk())
+                                spawnSuccess = true;
+                        }
+                        const timeToWait = predictVisible ? (60*1000) : (4*1000);
+                        const waitDate = new Date();
+                        waitDate.setTime(timeToWait-(Date.now()-predictOpenedTime));
+                        predictPopupTimeHeader.innerHTML = `${manualIndex}. Predict the weather in an hour. (${pad(waitDate.getMinutes(), 2)}:${pad(waitDate.getSeconds(), 2)})`;
+                        if(currentPoints >= 100) {
+                            clearInterval(intervalVal);
+                            await Swal.fire({
+                                icon: 'success',
+                                title: 'Great job',
+                                text: "You've finished the game!",
+                                confirmButtonText: "Play again",
+                            });
+                            window.location.reload(false);
+                        }
+                        if(!spawnSuccess || chunkCoordsRef.current.length > COMPLAIN_THRESHOLD) {
+                            if(!lockoutPrediction && chunkCoordsRef.current.length > COMPLAIN_THRESHOLD && (Date.now()-predictOpenedTime) >= timeToWait) {
+                                if(predictVisible) {
+                                    hidePredict();
+                                    updateCurrentPoints(-5);
+                                    selectRandomPoint();
+                                } else if(currentPoints > POINT_FAIL_THRESHOLD) {
+                                    predictVisible = true;
+                                    predictOpenedTime = Date.now();
+                                    predictForRandomPoint();
+                                } else {
+                                    clearInterval(intervalVal);
+                                    await Swal.fire({
+                                        icon: 'error',
+                                        title: 'Uh oh',
+                                        text: "You've been too inaccurate with your predictions, and your fellow meteorologists have decided to fire you!",
+                                        confirmButtonText: "Try again",
+                                    });
+                                    window.location.reload(false);
+        
+                                }
+                            }
+                            /* decrease lifetime */
+                            //if(!lockoutPrediction)
+                                //chunkCoordsRef.current.forEach(coord => coord[8] = Math.max(0, coord[8] - 0.875));
+                        }
+                    }
+                }
+                loopFn();
+            })();
+        }, []);
         const getWeatherAtPoint = (point, selfRef) => {
+            if(manualPredictionSource) {
+                console.log("%cANSWER TO PRECOMPUTED #" + (manualIndex-2), "font-weight: bold;", previousPrecomputeData.weatherObj);
+                return previousPrecomputeData.weatherObj;
+            }
             let weatherObj = { cloudCover: 0, temperature: 0, windSpeed: 0, alwaysHide: true };
-            const MAX_DISTANCE = 100;
             let biggestDistance = 0;
             const sortedCoords = chunkCoordsRef.current.filter(coord => {
-                const realDistance = Math.sqrt(Math.pow(coord[1] - point.y, 2) + Math.pow(coord[0] - point.x, 2));
-                console.log(realDistance, MAX_DISTANCE);
+                //let parentBBox = coord.chunkRef.current.getBBox();
+                //let realBBox = coord.chunkRef.current.querySelector(".center-circle").getBBox();
+                let realX = coord[0]; //parentBBox.x + coord[0] + realBBox.x + realBBox.width / 2; // + 50;
+                let realY = coord[1]; //parentBBox.y + coord[1] + realBBox.y + realBBox.height / 2; // + 50;
+                const realDistance = Math.floor(Math.sqrt(Math.pow(realY - point.y, 2) + Math.pow(realX - point.x, 2)));
                 const valid = realDistance <= MAX_DISTANCE;
                 coord.chunkDistance = MAX_DISTANCE-realDistance;
+                console.log(`%c %s %s %s %s %s %s`, `font-weight: ${valid ? 'bold' : 'normal'};`, `${coord[9]}.`, `${coord[5]} °F`, `${coord[4]}% cc`, `${coord[6]} mph`, `${MAX_DISTANCE-coord.chunkDistance} units away`, valid );
                 if(valid) {
                     biggestDistance = Math.max(biggestDistance, coord.chunkDistance);
                 }
@@ -1015,237 +1377,40 @@ async function setupForPredict(cities) {
                 weatherObj.windSpeed /= weightSum;
                 weatherObj.windSpeed = Math.round(weatherObj.windSpeed);
             }
-            console.log(weatherObj);
+            savedPredictionInfo.weatherObj = weatherObj;
+            window.finalPredictions.push(savedPredictionInfo);
+            console.log("There are now", window.finalPredictions.length, "precomputed predictions");
             return weatherObj;
         };
-        React.useEffect(() => {
-            (async function() {
-                let iterations = 1;
-
-                async function doWaitForPrediction() {
-                    lockoutPrediction = true;
-                    hidePredict();
-                    weatherPredictPoints.textContent = "Let's see how you did...";
-                    await new Promise(resolve => setTimeout(resolve, PREDICT_WAIT_TIME*1000));
-                    lockoutPrediction = false;
-                }
-                const pickNewCity = () => {
-                    city = cities[getRandomInt(0, cities.length)];
-                    cities.forEach(c => {
-                        c.style.visibility = (c != city) ? 'hidden' : 'visible';
-                    });
-                };
-                const onCloudClick = async(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    const currentTarget = e.currentTarget;
-                    selectRandomPoint();
-                    await doWaitForPrediction();
-                    var myValue = currentTarget.getAttribute("data-cloudcover");
-                    var myCloudCover;
-                    var w = getWeatherAtPoint(pivotPoint.getBBox());
-                    var correctAnswer = w.cloudCover;
-                    if(myValue == "thunderstorm")
-                        myCloudCover = 100;
-                    else if(myValue == "rain")
-                        myCloudCover = 75;
-                    else if(myValue == "partly-cloudy") {
-                        if(w.cloudCover >= 25 && w.cloudCover < 75 && myValue == "partly-cloudy")
-                            myCloudCover = w.cloudCover;
-                        else
-                            myCloudCover = 50;
-                    } else
-                        myCloudCover = 0;
-                    
-                    var diff = Math.abs(myCloudCover - correctAnswer);
-                    let conditions;
-                    if(w.cloudCover >= 85 && w.temperature >= BASE_TEMPERATURE)
-                        conditions = "thunderstorm";
-                    else if(w.cloudCover >= 75)
-                        conditions = "rain";
-                    else if(w.cloudCover >= 25)
-                        conditions = "partly cloudy";
-                    else
-                        conditions = "sunny";
-                    const maxDiff = 25;
-                    
-                    if(diff > maxDiff) {
-                        updateCurrentPoints(-10, conditions);
-                    } else {
-                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))), conditions);
-                    }
-                    hidePredict();
-                    iterations = 1;
-                };
-                predictPopup.querySelectorAll(".predict-cloudcover-option").forEach(btn => btn.addEventListener("click", onCloudClick));
-                const selectRandomPoint = () => {
-                    pickNewCity();
-                    const bbox = city.getBBox();
-                    const DIST = 25;
-                    midX = (bbox.x + (bbox.width / 2)) + getRandomArbitrary(-DIST, DIST);
-                    midY = (bbox.y + (bbox.height / 2)) + getRandomArbitrary(-DIST, DIST);
-                };
-                const predictForRandomPoint = () => {
-
-                    pivotPoint.setAttribute("cx", midX);
-                    pivotPoint.setAttribute("cy", midY);
-                    movePivotPoint();
-                    const names = [ "cloudcover", "temperature", "windspeed" ];
-                    currentPredictMode = getRandomInt(0, names.length);
-                    predictPopup.querySelectorAll(".predict-option").forEach(predict => {
-                        predict.style.display = (predict.classList.contains("predict-" + names[currentPredictMode])) ? '' : "none";
-                    });
-                    const realName = (names[currentPredictMode] == "cloudcover") ? "conditions" : names[currentPredictMode];
-                    predictPopupHeader.textContent = `What do you think the ${realName} in this part of ` + getCityName(city) + ` will be?`;
-                    
-                    predictPopup.classList.remove("predict-popup-hidden");
-                    predictPopup.style.display = '';
-                    predictPopup.classList.add("predict-popup-closed");
-                    predictPopupPoints.classList.remove("predict-popup-points-shown");
-                };
-
-                predictSubmitWindspeedButton.addEventListener("click", async(e) => {
-                    e.stopPropagation();
-                    selectRandomPoint();
-                    await doWaitForPrediction();
-                    var tmp = parseInt(predictWindspeedInput.value);
-                    var real = getWeatherAtPoint(pivotPoint.getBBox()).windSpeed;
-                    var diff = Math.abs(real - tmp);
-                    console.log(tmp, real, diff);
-                    const maxDiff = 20;
-                    if(diff > maxDiff) {
-                        updateCurrentPoints(-10, real + " mph");
-                    } else {
-                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))), real + " mph");
-                    }
-                    hidePredict();
-                    iterations = 1;
-                })
-                predictSubmitButton.addEventListener("click", async(e) => {
-                    e.stopPropagation();
-                    selectRandomPoint();
-                    await doWaitForPrediction();
-                    var tmp = parseInt(predictPopupInput.value);
-                    var real = getWeatherAtPoint(pivotPoint.getBBox()).temperature;
-                    var diff = Math.abs(real - tmp);
-                    const maxDiff = 15;
-                    if(diff > maxDiff) {
-                        updateCurrentPoints(-10, real + " °F");
-                    } else {
-                        updateCurrentPoints(Math.round(10 * (1-(diff/maxDiff))), real + " °F");
-                    }
-                    hidePredict();
-                    iterations = 1;
-                })
-                removeLoader();
-                await swalPromise;
-                swalPromiseResolved = true;
-                try {
-                    window.sessionStorage.setItem('shownWelcome', true);
-                } catch(e) {
-                    console.error(e);
-                }
-                selectRandomPoint();
-                let spawnSuccess = false;
-                const COMPLAIN_THRESHOLD = -1;
-                while(isMounted()) {
-                    if(!lockoutPrediction && currentPoints > POINT_FAIL_THRESHOLD && chunkCoordsRef.current.length < 100) {
-                        for(var i = 0; i < 10; i++) {
-                            let isStatic = !(Math.random() >= 0.75);
-                            let x = midX + getRandomArbitrary(-200, 200);
-                            let angle = getRandomArbitrary(0, 360);
-                            let cloudCover = getRandomInt(0, 5) * 25;
-                            if(cloudCover >= 75)
-                                isStatic = false;
-                            let y = midY + getRandomArbitrary(-200, 200);
-                            let temperatureF = getRandomInt(50, 113);
-                            let windSpeed = (!isStatic ? (getRandomInt(1, 5) * 10) : 0);
-
-                            let coordSet = [ x, y, angle, 0, cloudCover, temperatureF, windSpeed, 1, 50 ];
-                            let tooClose = false;
-                            let distance = 0;
-                            for(var j = 0; j < chunkCoordsRef.current.length; j++) {
-                                const coord = chunkCoordsRef.current[j];
-                                distance = Math.sqrt(Math.pow(coord[1] - coordSet[1], 2) + Math.pow(coord[0] - coordSet[0], 2))
-                                if(distance < 100) {
-                                    tooClose = true;
-                                    break;
-                                }
-                            }
-                            if(tooClose)
-                                continue;
-                            //console.log("Spawn", coordSet[4], coordSet[5]);
-                            coordSet.chunkRef = { current: null };
-                            chunkCoordsRef.current.push(coordSet);
-                            forceUpdate();
-                            spawnSuccess = true;
-                            break;
-                        }
-                    }
-                    if(!spawnSuccess || chunkCoordsRef.current.length > COMPLAIN_THRESHOLD) {
-                        if(!lockoutPrediction && chunkCoordsRef.current.length > COMPLAIN_THRESHOLD && (iterations % (predictVisible ? 60 : 4)) == 0) {
-                            if(currentPoints >= 100) {
-                                await Swal.fire({
-                                    icon: 'success',
-                                    title: 'Great job',
-                                    text: "You've finished the game!",
-                                    confirmButtonText: "Play again",
-                                });
-                                window.location.reload(false);
-                            } else if(predictVisible) {
-                                hidePredict();
-                                updateCurrentPoints(-5);
-                            } else if(currentPoints > POINT_FAIL_THRESHOLD) {
-                                predictVisible = true;
-                                predictForRandomPoint();
-                            } else {
-                                await Swal.fire({
-                                    icon: 'error',
-                                    title: 'Uh oh',
-                                    text: "You've been too inaccurate with your predictions, and your fellow meteorologists have decided to fire you!",
-                                    confirmButtonText: "Try again",
-                                });
-                                window.location.reload(false);
-    
-                            }
-                            iterations = 0;
-                        }
-                        /* decrease lifetime */
-                        if(!lockoutPrediction)
-                            chunkCoordsRef.current.forEach(coord => coord[8] = Math.max(0, coord[8] - (getRandomArbitrary(0.5, 3) / 2)));
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        iterations++;
-                    }
-                }
-            })();
-        }, []);
+        const getPivotWeather = () => {
+            return getWeatherAtPoint({ x: parseFloat(pivotPoint.getAttribute("cx")) + 6, y: parseFloat(pivotPoint.getAttribute("cy")) });
+        };
         return chunkCoordsRef.current.map((coord, index) => {
-            return <WeatherChunk innerRef={coord.chunkRef} getWeatherAtPoint={getWeatherAtPoint} selfIndex={index} otherChunks={chunkCoordsRef.current} key={index} x={coord[0]} y={coord[1]} angle={coord[2]} cloudCover={coord[4]} temperature={coord[5]} windSpeed={coord[6]} opacity={coord[7]}/>;
+            return <WeatherChunk id={coord[9]} innerRef={coord.chunkRef} getWeatherAtPoint={getWeatherAtPoint} selfIndex={index} otherChunks={chunkCoordsRef.current} key={index} x={coord[0]} y={coord[1]} angle={coord[2]} cloudCover={coord[4]} temperature={coord[5]} windSpeed={coord[6]} opacity={coord[7]}/>;
         });
     }
     ReactDOM.render(<WeatherContainer/>, reactGroup);
     
     mapGroup.addEventListener("panzoomstart", () => {
         dragMove = true;
-        console.log("start pan");
     });
     mapGroup.addEventListener("mousemove", () => {
         if(dragMove)
-            movePivotPoint(); 
+            dbPivot(); 
     });
-    mapGroup.addEventListener("panzoomchange", movePivotPoint);
+    mapGroup.addEventListener("panzoomchange", dbPivot);
     mapGroup.addEventListener("panzoomend", () => {
-        movePivotPoint();
-        console.log("end pan");
+        dbPivot();
         dragMove = false;
     });
     const zoomHook = () => {
         const scale = panzoom.getScale();
         document.querySelector(".scale span").textContent = Math.round(((1/(scale/2)) * 2) * 10) + " mi";
+        dbPivot();
     };
     mapGroup.addEventListener("panzoomzoom", zoomHook);
     zoomHook();
-    window.addEventListener("resize", movePivotPoint);
+    window.addEventListener("resize", dbPivot());
     setTimeout(() => movePivotPoint());
 }
 
@@ -1301,10 +1466,11 @@ fetch('state.svg')
         let isPredict = getParameterByName("predict") == "true";
         document.querySelectorAll(".help-button").forEach(btn => btn.addEventListener("click", async() => {
             await showSymbolDoc();
-            if(isPredict)
+            if(isPredict) {
                 await showPredictDoc();
-            else
+            } else {
                 await showReportDoc();
+            }
         }));
         panzoom = Panzoom(mapGroup, {
             maxScale: isPredict ? 6 : 2,
@@ -1319,10 +1485,13 @@ fetch('state.svg')
 
         
         pivotPoint = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        pivotPoint.setAttribute("r", "10");
-        pivotPoint.setAttribute("cx", 100);
-        pivotPoint.setAttribute("cy", 100);
+        pivotPoint.setAttribute("r", (MAX_DISTANCE).toString());
+        pivotPoint.setAttribute("cx", -10000);
+        pivotPoint.setAttribute("cy", -10000);
+        
         pivotPoint.setAttribute("fill", "none");
+        pivotPoint.setAttribute("stroke", isPredict ? "#ff0000" : "none");
+        pivotPoint.setAttribute("stroke-width", "2");
         mapGroup.appendChild(pivotPoint);
         let symbolsShown = false;
         try {
@@ -1339,6 +1508,7 @@ fetch('state.svg')
             }
         }
         if(!isPredict) {
+            gameRng = () => Math.random();
             startTimer();
             let reportInstrsShown = false;
             try {
@@ -1364,6 +1534,27 @@ fetch('state.svg')
             });
             removeLoader();
         } else {
+            const seed = getParameterByName("seed");
+            const manualFile = getParameterByName("manualFile");
+            const startIndex = parseInt(getParameterByName("startIndex"));
+            allowLoopback = getParameterByName("allowLoopback") != "false";
+            if(typeof manualFile == 'string') {
+                manualPredictionSource = await fetch(manualFile).then(response => response.json());
+                console.log("Loaded", manualPredictionSource.length, "instances of precomputed data");
+                if(typeof startIndex == 'number' && !isNaN(startIndex))
+                    manualIndex = startIndex;
+            }
+            else if(seed == null || typeof seed == 'undefined')
+                await Swal.fire({
+                    text: 'You must specify a seed or precomputed prediction file.',
+                    icon: 'error',
+                    showCancelButton: false,
+                    showConfirmButton: false,
+                    allowEnterKey: false,
+                    allowEscapeKey: false,
+                    allowOutsideClick: false
+                });
+            gameRng = seedrandom(seed);
             setupForPredict(cities);
             svg.querySelector("#ui-container").remove();
         }

@@ -35,42 +35,42 @@
                 <div class="report-timer" style="display:none;">3</div>
                 <div class="predict-popup predict-popup-closed" style="display:none;">
                     <div class="predict-popup-time-header">
-                        <button class="predict-close-button">x</button>
+                        <button onfocus="this.blur();" class="predict-close-button">x</button>
                         <b>Predict the weather for 30 minutes from now.</b>
                     </div>
                     <div class="predict-popup-points">-5 points</div>
                     <div class="predict-popup-header">
-                        <button style="visibility: hidden;" class="predict-close-button">x</button>
+                        <button onfocus="this.blur();" style="visibility: hidden;" class="predict-close-button">x</button>
                         <b>What is the temperature in this part of Los Angeles?</b>
                     </div>
                     <br/>
                     <div class="predict-option predict-cloudcover" style="display:none;">
-                        <button class="predict-cloudcover-option" data-cloudcover="sunny">
+                        <button onfocus="this.blur();" class="predict-cloudcover-option" data-cloudcover="sunny">
                             <img src="weather/sunny.svg"/>
                         </button>
-                        <button class="predict-cloudcover-option" data-cloudcover="partly-cloudy"> 
+                        <button onfocus="this.blur();" class="predict-cloudcover-option" data-cloudcover="partly-cloudy"> 
                             <img src="weather/partly-cloudy.svg"/>
                         </button>
-                        <button class="predict-cloudcover-option" data-cloudcover="rain">
+                        <button onfocus="this.blur();" class="predict-cloudcover-option" data-cloudcover="rain">
                             <img src="weather/rain.svg"/>
                         </button>
-                        <button class="predict-cloudcover-option" data-cloudcover="thunderstorm">
+                        <button onfocus="this.blur();" class="predict-cloudcover-option" data-cloudcover="thunderstorm">
                             <img src="weather/thunderstorm.svg"/>
                         </button>
                     </div>
                     <div class="predict-option predict-temperature">
                         <div class="slider-row">
-                            <input type="range" value="50" name="pred-temperature" min="50" max="113">
+                            <input onfocus="this.blur();" type="range" value="50" name="pred-temperature" min="50" max="113">
                             <span>50 °F</span>
                         </div>
-                        <button class="predict-submit-button">Submit</button>
+                        <button onfocus="this.blur();" class="predict-submit-button">Submit</button>
                     </div>
                     <div class="predict-option predict-windspeed">
                         <div class="slider-row">
                             <input type="range" value="0" name="pred-windspeed" min="0" max="50">
                             <span>0 mph</span>
                         </div>
-                        <button class="predict-submit-windspeed-button">Submit</button>
+                        <button onfocus="this.blur();" class="predict-submit-windspeed-button">Submit</button>
                     </div>
                 </div>
                 <div class="loader">
